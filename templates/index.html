@@ -1,0 +1,200 @@
+{% extends "layout.html" %}
+
+{% block head %}
+    <script src="http://documentcloud.github.com/underscore/underscore.js"></script>
+    <script src="{{ url_for('static', filename='js/json2.js') }}"></script>
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js"></script>
+    <script src="http://documentcloud.github.com/backbone/backbone.js"></script>
+
+    <script type="text/javascript">
+        // http://dumpsite.com/forum/index.php?topic=4.msg8#msg8
+        String.prototype.replaceAll = function(str1, str2, ignore)
+        {
+            return this.replace(new RegExp(str1.replace(/([\,\!\\\^\$\{\}\[\]\(\)\.\*\+\?\|\<\>\-\&])/g, function(c){return "\\" + c;}), "g"+(ignore?"i":"")), str2);
+        };
+
+        $(document).ready(function(){
+
+            window.setupSearch = function (){
+                $("#random_movie").click(function(){
+                    $.ajax({
+                        url:'/api/randommovie',
+                        method: 'GET',
+                        dataType: 'text'
+                    }).success(function(text){
+                                $("#search_box").val("");
+                                $("#search_box").attr("placeholder", text);
+                            })
+                });
+
+                var result_template = _.template($("#template_search_results").html());
+
+
+                $("#search_box").keydown(function(event){
+                    var text = ($("#search_box").val() + String.fromCharCode(event.which)).toLowerCase();
+
+                    var text = text.replaceAll(" ","_");
+                    var text = text.replace(/[^\w_]+/g, '');
+                    if (text != ""){
+                        var url = "http://sg.media-imdb.com/suggests/" + text[0] + "/" + text + ".json";
+                        var function_name = "imdb$" + text;
+                        window[function_name] = function(results){
+                            $("#results_table").find("tbody>tr").remove();
+
+                            var results = _.filter(results["d"], function(result){ return ("q" in result && result["q"] == "feature")});
+                            $("#results_table").find("tbody").html(result_template({results:results}));
+
+                            delete window[function_name];
+                        };
+
+                        // ha ha ha cheat the system
+                        $.ajax({
+                            url: url,
+                            type: "GET",
+                            dataType: "jsonp",
+                            crossDomain:true
+                        })
+                    }
+                })
+            };
+
+            $.getScript('{{ url_for('static', filename='js/movie.js') }}');
+
+            $("#button_show_rec").click(function(){
+                app.navigate("",true)
+            });
+
+            $("#button_show_search").click(function(){
+                app.navigate("search",true)
+            });
+        })
+    </script>
+
+    <script type="text/template" id="template_movie_item">
+        <div class="row">
+            <%= object['title'] %>
+            <div class="pull-right">
+                <a href="#" class="delete_movie_item" data-id="<%= object['id'] %>">x</a>
+            </div>
+        </div>
+    </script>
+
+    <script type="text/template" id="template_search_results">
+        <% _.each(results, function(result) { %>
+            <tr id="<%= result['id'] %>_search">
+                <td>
+                    <p>
+                        <p></p>
+                        <a class="btn btn-success"
+                           onclick="handleSearchClick('<%= result['id'] %>', '<%= result['l'] %>')">
+                            <i class="icon-thumbs-up icon-white"></i>
+                        </a>
+                        <p></p>
+                    </p>
+                </td>
+                <td>
+                    <p>
+                        <h3><%= result["l"] %> (<%= result["y"] %>)</h3>
+                        <em><%= result["s"] %></em>
+                    </p>
+                </td>
+            </tr>
+        <% }); %>
+    </script>
+
+    <script type="text/template" id="search_view">
+        <p>Have a search for some movies you have watched and enjoyed -
+            this will help us to build a personalised recommendation list for you</p>
+
+        <br />
+        <div class="input-append">
+            <input placeholder="{{ placeholder }}" style="height:30px; font-size:15pt;"
+                   class="span7 search-query" id="search_box" type="text">
+            <button class="btn btn-large" id="random_movie" type="button"><i class="icon-refresh"></i></button>
+        </div>
+
+        <br />
+        <br />
+
+        <table class="table" id="results_table">
+            <tbody>
+
+            </tbody>
+        </table>
+    </script>
+
+    <script type="text/template" id="template_recommendation_item">
+        <%= object['title'] %>
+    </script>
+
+    <script type="text/template" id="recommendations_view">
+        <div class="row">
+            <div class="span8">
+                <table class="table" id="recommendations_table">
+                    <tbody>
+                    <% _.each(objects, function(rec) { %>
+                        <tr>
+                            <td><img src="<%= rec.get('poster') %>"></td>
+                            <td><h4><%= rec.get('title') %> (<%= rec.get('year') %>)</h4></td>
+                            <td>
+                                <p>Directed by <%= rec.get('director') %></p>
+                                <p><strong>IMDB score:</strong>
+                                    <a href="http://www.imdb.com/title/tt<%= rec.get('imdb_id') %>"
+                                            target="_blank">
+                                        <%= rec.get('score') %>
+                                    </a>
+
+                                    <div class="span4">
+                                        <a class="btn btn-success"
+                                           onclick="handleRecommendedLikeClick(<%= rec.get('id') %>)">
+                                            <i class="icon-thumbs-up icon-white"></i>
+                                        </a>
+                                        <a class="btn btn-danger"
+                                           onclick="handleRecommendedDislikeClick(<%= rec.get('id') %>)">
+                                            <i class="icon-thumbs-down   icon-white"></i>
+                                        </a>
+                                    </div>
+
+                                </p>
+                                <p></p>
+                            </td>
+                        </tr>
+                    <% }); %>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </script>
+
+
+
+{% endblock %}
+
+{% block page_header %}{% endblock %}
+
+{% block body %}
+
+    <div class="span8" id="main">
+
+    </div>
+
+    <div class="span4">
+        <p><a id="button_show_rec" class="btn btn-success btn-large">
+            <i class="icon-white icon-ok"></i>
+            Show me my recommendations
+        </a>
+
+        <a id="button_show_search" class="btn btn-success btn-large">
+            <i class="icon-white icon-search"></i>
+            Search for some more movies
+        </a></p>
+
+        <div class="well">
+            <p>
+                <h4>Movies you enjoyed:</h4>
+            </p>
+
+            <ul id="movieList"></ul>
+        </div>
+    </div>
+{% endblock %}

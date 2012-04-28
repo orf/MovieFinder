@@ -1,0 +1,52 @@
+{% extends "layout.html" %}
+
+{% block head %}
+    <script>
+        window.fbAsyncInit = function() {
+            FB.init({
+                appId      : '{{ config["FACEBOOK_APP_ID"] }}',
+                status     : true,
+                cookie     : true,
+                xfbml      : true,
+                oauth      : true
+            });
+
+            {% if not session["auth_user"] %}
+                // If the user is not currently authenticated
+
+                function handleRedirectToAuth(key) {
+                    window.location = "{{ url_for('facebook_authorized') }}?access_token="+key
+                }
+
+                FB.Event.subscribe('auth.login', function(response) {
+                    handleRedirectToAuth(response.authResponse.accessToken);
+                });
+
+                FB.getLoginStatus(function(response) {
+                    if (response.status === 'connected') {
+                        handleRedirectToAuth(response.authResponse.accessToken);
+                    }
+                });
+            {% endif %}
+
+        };
+        (function(d){
+            var js, id = 'facebook-jssdk'; if (d.getElementById(id)) {return;}
+            js = d.createElement('script'); js.id = id; js.async = true;
+            js.src = "//connect.facebook.net/en_US/all.js";
+            d.getElementsByTagName('head')[0].appendChild(js);
+        }(document));
+    </script>
+{% endblock %}
+
+{% block page_header %}Please connect with us first{% endblock %}
+
+{% block body %}
+    <div class="span12">
+        <p>Click below to login with facebook. We don't post anything and only use it to save your movie history</p>
+    </div>
+    <div class="span4 offset5">
+        <div class="fb-login-button">Login with Facebook</div>
+    </div>
+{% endblock %}
+
