@@ -1,18 +1,19 @@
 from flask import render_template, request, Flask, url_for, session, redirect, abort
 from sqlalchemy.orm.exc import NoResultFound
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.sql import func
+from sqlalchemy.dialects import postgres
 from flask.ext.sqlalchemy import SQLAlchemy
 from flask.ext.oauth import OAuth
 from flask.ext.celery import Celery
 from celery.task.sets import TaskSet
-from sqlalchemy.dialects import postgres
 from collections import defaultdict
 import json
 import datetime
-from imdb import IMDb
 import urllib2
 import os
 import operator
+from imdb import IMDb
 
 def make_app():
     return Flask("MovieFinder")
@@ -22,8 +23,6 @@ app.config.from_object('settings')
 db = SQLAlchemy(app)
 #db.engine.echo = True
 celery = Celery(app)
-
-
 
 class Movie(db.Model):
     __tablename__ = "movies"
@@ -58,6 +57,11 @@ class User(db.Model):
             return []
 
         return Movie.query.filter(Movie.imdb_id.in_(self.movies_liked)).all()
+
+try:
+    db.session.execute("CREATE EXTENSION intarray")
+except ProgrammingError:
+    db.session.rollback()
 
 
 try:

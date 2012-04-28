@@ -1,10 +1,10 @@
 {% extends "layout.html" %}
 
 {% block head %}
-    <script src="http://documentcloud.github.com/underscore/underscore.js"></script>
+    <script src="{{ url_for('static', filename='js/underscore.js') }}"></script>
     <script src="{{ url_for('static', filename='js/json2.js') }}"></script>
-    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js"></script>
-    <script src="http://documentcloud.github.com/backbone/backbone.js"></script>
+    <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/backbone.js') }}"></script>
 
     <script type="text/javascript">
         // http://dumpsite.com/forum/index.php?topic=4.msg8#msg8
