@@ -135,8 +135,8 @@ function handleRecommendedDislikeClick(id){
 
 var AppRouter  = Backbone.Router.extend({
     routes:{
-        "":"recommendations",
-        "search":"search"
+        "search":"search",
+        ".*":"recommendations"
     },
 
     search:function(){

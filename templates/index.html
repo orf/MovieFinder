@@ -1,12 +1,52 @@
 {% extends "layout.html" %}
 
+{% block fb_methods %}
+    FB.getLoginStatus(function(response) {
+        console.log("Response");
+        console.log(response);
+        if (response.status === 'connected') {
+            $("#logout_button").click(function(ev){
+                FB.logout(function(response){
+                    console.log("Logged out");
+                    window.location = "{{ url_for('logout') }}";
+                });
+            });
+        } else {
+            window.location = "{{ url_for('logout') }}";
+        }
+        });
+{% endblock %}
+
 {% block head %}
     <script src="{{ url_for('static', filename='js/underscore.js') }}"></script>
     <script src="{{ url_for('static', filename='js/json2.js') }}"></script>
     <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/backbone.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/bootstrap.js') }}"></script>
+    <link href="{{ url_for('static', filename='css/jquery.fancybox-1.3.4.css') }}" rel="stylesheet" media="screen">
+    <script src="{{ url_for('static', filename='js/jquery.fancybox-1.3.4.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/spin.js') }}"></script>
+
+    <script type="text/javascript">if (window.location.hash == '#_=_')window.location.hash = '';</script>
 
     <script type="text/javascript">
+
+        $.fn.spin = function(opts) {
+            this.each(function() {
+                var $this = $(this),
+                        data = $this.data();
+
+                if (data.spinner) {
+                    data.spinner.stop();
+                    delete data.spinner;
+                }
+                if (opts !== false) {
+                    data.spinner = new Spinner($.extend({color: $this.css('color')}, opts)).spin(this);
+                }
+            });
+            return this;
+        };
+
         // http://dumpsite.com/forum/index.php?topic=4.msg8#msg8
         String.prototype.replaceAll = function(str1, str2, ignore)
         {
@@ -14,6 +54,32 @@
         };
 
         $(document).ready(function(){
+
+            window.HandleTrailerClick = function(movie_id){
+
+                $("#movie_"+movie_id).spin();
+                $("#movie_"+movie_id+">#trailer_video").addClass("disabled");
+
+                var movie = app.movieSuggestions.get(movie_id);
+                var search_title = movie.get("title") + " (" + movie.get("year") + ") trailer";
+                var url = "https://gdata.youtube.com/feeds/api/videos?alt=json-in-script&q="+encodeURI(search_title);
+
+                $.ajax({
+                    url:url,
+                    method:"GET",
+                    dataType:"jsonp"
+                }).success(function(data){
+                            var url = data.feed.entry[0].link[0].href.replace("watch?v=","v/");
+                            $("#movie_"+movie_id+">#trailer_video").removeClass("disabled");
+                            $("#movie_"+movie_id).spin(false);
+                            $.fancybox({
+                                'type':'iframe',
+                                'href':url,
+                                'autoDimensions':'true'
+                            })
+                })
+            };
+
 
             window.setupSearch = function (){
                 $("#random_movie").click(function(){
@@ -47,7 +113,6 @@
                             delete window[function_name];
                         };
 
-                        // ha ha ha cheat the system
                         $.ajax({
                             url: url,
                             type: "GET",
@@ -86,7 +151,7 @@
                     <p>
                         <p></p>
                         <a class="btn btn-success"
-                           onclick="handleSearchClick('<%= result['id'] %>', '<%= result['l'] %>')">
+                           onclick='handleSearchClick("<%= result["id"] %>", "<%= _.escape(result["l"]) %>")'>
                             <i class="icon-thumbs-up icon-white"></i>
                         </a>
                         <p></p>
@@ -105,7 +170,8 @@
     <script type="text/template" id="search_view">
         <p>Have a search for some movies you have watched and enjoyed -
             this will help us to build a personalised recommendation list for you</p>
-
+        <strong>Movies you like on Facebook:</strong>
+        <div id="facebook_movies"></div>
         <br />
         <div class="input-append">
             <input placeholder="{{ placeholder }}" style="height:30px; font-size:15pt;"
@@ -130,12 +196,19 @@
     <script type="text/template" id="recommendations_view">
         <div class="row">
             <div class="span8">
-                <table class="table" id="recommendations_table">
+                <table class="table table-bordered" id="recommendations_table">
                     <tbody>
                     <% _.each(objects, function(rec) { %>
                         <tr>
-                            <td><img src="<%= rec.get('poster') %>"></td>
-                            <td><h4><%= rec.get('title') %> (<%= rec.get('year') %>)</h4></td>
+                            <td width="100" height="150"><img src="<%= rec.get('poster') %>"
+                                     height=150 width="100"
+                                     onerror="this.src = '{{ url_for("static",filename="img/no_cover_art.gif") }}'"></td>
+                            <td class="span3">
+                                <h4><a target="_blank" href="http://www.imdb.com/title/tt<%= rec.get('imdb_id') %>">
+                                <%= rec.get('title') %> (<%= rec.get('year') %>)</a></h4>
+                                <p><small><%= rec.get('plot_outline') %></small></p>
+                                <p><small>Recommended by: <%= rec.get('linked_by') %></small></p>
+                            </td>
                             <td>
                                 <p>Directed by <%= rec.get('director') %></p>
                                 <p><strong>IMDB score:</strong>
@@ -143,19 +216,45 @@
                                             target="_blank">
                                         <%= rec.get('score') %>
                                     </a>
+                                </p>
+                                <p>
+                                    <strong>Genre:</strong>
+                                    <%= rec.get('genre') %>
+                                </p>
+                                <p>
+                                    <strong>Ratings:</strong>
+                                    <%= rec.get("rating_uk") %> (UK) <%= rec.get("rating_usa") %> (USA)
+                                </p>
+                                <p>
+                                    <strong>Languages:</strong>
+                                    <%= rec.get("languages") %>
+                                </p>
 
-                                    <div class="span4">
+                                <p><strong>Stars:</strong>
+                                    <%= rec.get("stars") %>
+                                </p>
+
+                                    <div class="span3" id="movie_<%= rec.get('id') %>">
                                         <a class="btn btn-success"
+                                           title="I liked this movie"
                                            onclick="handleRecommendedLikeClick(<%= rec.get('id') %>)">
                                             <i class="icon-thumbs-up icon-white"></i>
                                         </a>
                                         <a class="btn btn-danger"
+                                           title="Hide this movie"
                                            onclick="handleRecommendedDislikeClick(<%= rec.get('id') %>)">
-                                            <i class="icon-thumbs-down   icon-white"></i>
+                                            <i class="icon-thumbs-down icon-white"></i>
+                                        </a>
+                                        <a class="btn btn-primary" title="Add to my watchlist">
+                                            <i class=" icon-plus icon-white"></i>
+                                        </a>
+                                        <a id="trailer_video" class="btn btn-info"
+                                           onclick="HandleTrailerClick(<%= rec.get('id') %>)">
+                                            <i class="icon-film"></i>
                                         </a>
                                     </div>
 
-                                </p>
+
                                 <p></p>
                             </td>
                         </tr>
@@ -197,4 +296,5 @@
             <ul id="movieList"></ul>
         </div>
     </div>
+
 {% endblock %}

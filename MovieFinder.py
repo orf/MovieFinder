@@ -13,7 +13,9 @@ import datetime
 import urllib2
 import os
 import operator
-from imdb import IMDb
+from imdb import IMDb, IMDbDataAccessError
+import gdata.youtube.service
+import urllib
 
 def make_app():
     return Flask("MovieFinder")
@@ -34,6 +36,14 @@ class Movie(db.Model):
     director        = db.Column(db.String(), nullable=True)
     genre           = db.Column(db.String(), nullable=True)
     poster_url      = db.Column(db.String(), nullable=True)
+    rating_uk       = db.Column(db.String(), nullable=True)
+    rating_usa      = db.Column(db.String(), nullable=True)
+    languages       = db.Column(db.String(), nullable=True)
+    plot_outline    = db.Column(db.String(), nullable=True)
+    stars           = db.Column(db.String(), nullable=True)
+
+    trailer_url = db.Column(db.String(), nullable=True)
+    trailer_cached = db.Column(db.DateTime(), nullable=True)
 
     # Scores + recommendations + date cached
     date_cached     = db.Column(db.DateTime(), nullable=True)
@@ -43,6 +53,21 @@ class Movie(db.Model):
 
     def get_poster_url(self):
         return url_for("static", filename="posters/%s/%s.jpg"%(str(self.imdb_id)[0], self.imdb_id))
+
+    def toJson(self, linked_by):
+        x =  {jk:getattr(self, k) or "unknown" for jk,k in [
+            ("id","imdb_id"), ("poster","poster_url"),
+            ("title","title"),("year","year"),("director","director"),
+            ("score","imdb_score"),("imdb_id","imdb_string_id"),
+            ("genre","genre"),("rating_uk","rating_uk"),("rating_usa","rating_usa"),
+            ("languages","languages"),("plot_outline","plot_outline"),
+            ("stars","stars"),
+        ]}
+        if linked_by:
+            x["linked_by"] = ", ".join(linked_by)
+        else:
+            x["linked_by"] = ""
+        return x
 
 
 class User(db.Model):
@@ -78,7 +103,7 @@ facebook = oauth.remote_app('facebook',
     authorize_url='https://www.facebook.com/dialog/oauth',
     consumer_key=app.config["FACEBOOK_APP_ID"],
     consumer_secret=app.config["FACEBOOK_APP_SECRET"],
-    request_token_params={'scope': 'email'}
+    request_token_params={'scope': 'email,user_likes'}
 )
 
 _old_render = render_template
@@ -86,15 +111,14 @@ _old_render = render_template
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.162 Safari/535.19"
 
 @celery.task(name="MovieFinder.GetRecommendations")
-def GetRecommendations(movie_id, movie_db=None):
-    if not movie_db:
-        try:
-            movie_db = Movie.query.filter_by(imdb_id=movie_id).one()
-        except NoResultFound:
-            print "Movie %s not found"%movie_id
-            return
+def GetRecommendations(movie_id):
+    try:
+        movie_db = Movie.query.filter_by(imdb_id=movie_id).one()
+    except NoResultFound:
+        print "Movie %s not found"%movie_id
+        return
 
-    print "Fetching recommendations"
+    print "Fetching recommendations for id %s"%movie_id
     RECOMENDATION_URL = "http://www.imdb.com/widget/recommendations/_ajax/adapter/shoveler?start=1&count=25&specs=p13nsims:tt"+str(movie_db.imdb_string_id)
     req = urllib2.Request(RECOMENDATION_URL, headers={"User-Agent":USER_AGENT, "Host":"www.imdb.com"})
     try:
@@ -120,7 +144,7 @@ def GetRecommendations(movie_id, movie_db=None):
             db.session.commit()
 
 
-@celery.task(name="MovieFinder.AddMovie")
+@celery.task(name="MovieFinder.AddMovie", default_retry_delay=30)
 def AddMovie(movie_id, get_recommendations=True):
     print "Processing movie %s"%movie_id
 
@@ -129,16 +153,25 @@ def AddMovie(movie_id, get_recommendations=True):
 
     try:
         movie_db = Movie.query.filter_by(imdb_id=movie_id).one()
-    except NoResultFound:
-        print "Movie %s not found"%movie_id
+    except Exception:
         movie_db = Movie()
         movie_db.imdb_id = movie_id
         movie_db.imdb_string_id = string_id
 
     imdb = IMDb()
-    movie = imdb.get_movie(movie_id)
+    try:
+        movie = imdb.get_movie(movie_id)
+    except IMDbDataAccessError:
+        print "Error accessing IMDB for ID %s, retrying"%movie_id
+        AddMovie.retry()
+        return
     if not movie.get("title"):
-        print "Movie %s not in IMDB apparently"%movie_id
+        print "Movie %s not in IMDB apparently, retrying"%movie_id
+        AddMovie.retry()
+        return
+
+    if "production status" in movie.keys():
+        print "Movie ID %s is not completed yet (%s) - stopping"%(movie_id,movie.get("production status"))
         return
 
     movie_db.title = movie.get("title")
@@ -151,8 +184,28 @@ def AddMovie(movie_id, get_recommendations=True):
     movie_db.imdb_score = movie.get("rating")
     movie_db.date_cached = datetime.datetime.now()
 
-    if "genre" in movie.keys():
-        movie_db.genre = ",".join(movie.get("genre"))
+    if "genres" in movie.keys():
+        movie_db.genre = ", ".join(movie.get("genres"))
+
+    if "certificates" in movie.keys():
+        certs = movie.get("certificates")
+        for cert in certs:
+            csplit = cert.split(":")
+            if csplit[0] == "UK":
+                movie_db.rating_uk = csplit[1]
+            elif csplit[0] == "USA":
+                movie_db.rating_usa = csplit[1]
+
+    if "languages" in movie.keys():
+        movie_db.languages = ", ".join(movie.get("languages"))
+
+    if "plot outline" in movie.keys():
+        movie_db.plot_outline = movie.get("plot outline")
+
+    if "cast" in movie.keys():
+        movie_db.stars = ", ".join(
+            [o.get("name") for o in movie.get("cast")[:3] if o.get("name")]
+        )
 
     db.session.add(movie_db)
     try:
@@ -160,6 +213,7 @@ def AddMovie(movie_id, get_recommendations=True):
     except Exception,e:
         print "Error adding ID %s: %s"%(movie_id,e)
         db.session.rollback()
+        return
     else:
         print "Handled ID %s"%movie_id
         print "Rating: %s"%movie_db.imdb_score
@@ -173,10 +227,10 @@ def AddMovie(movie_id, get_recommendations=True):
             _path = os.path.join(folder_path,"%s.jpg"%movie_id)
 
             if not os.path.exists(_path):
-                print "Downloading poster to path %s"%_path
+                #print "Downloading poster to path %s"%_path
                 with open(_path,"wb") as poster:
                     poster_req = urllib2.Request(movie.get("cover url"))
-                    wr = urllib2.urlopen(poster_req)
+                    wr = urllib2.urlopen(poster_req, timeout=5)
                     while True:
                         d = wr.read(100)
                         if d == "":
@@ -184,17 +238,30 @@ def AddMovie(movie_id, get_recommendations=True):
                         poster.write(d)
                 print "Poster downloaded"
                 movie_db.poster_url = _path
-                db.session.add(movie_db)
-                try:
-                    db.session.commit()
-                except Exception,e:
-                    print "Could not set poster_url: %s"%e
-                    db.session.rollback()
+            else:
+                print "Poster already downloaded"
+                movie_db.poster_url = _path
+            db.session.add(movie_db)
+            try:
+                db.session.commit()
+            except Exception,e:
+                print "Could not set poster_url: %s"%e
+                db.session.rollback()
         except Exception,e:
             print "Error downloading poster: %s"%e
+    else:
+        print "* Setting cover URL to nothing"
+        movie_db.poster_url = os.path.join("static","img","no_cover_art.gif")
+        db.session.add(movie_db)
+        try:
+            db.session.commit()
+        except Exception,e:
+            print "Could not set poster_url: %s"%e
+            db.session.rollback()
 
     if get_recommendations:
-        GetRecommendations(movie_id, movie_db)
+        print "Getting recommendations..."
+        GetRecommendations(movie_db.imdb_id)
 
     db.session.close()
 
@@ -210,6 +277,39 @@ def index():
         return render_template("connect.html")
 
     return render_template("index.html", placeholder=random_movie())
+
+
+
+#@app.route("/api/get_trailer/<int:id>")
+def get_trailer(id):
+    try:
+        movie = db.session.query(Movie).filter_by(imdb_id=id).one()
+    except NoResultFound:
+        return abort(404)
+
+    if movie.trailer_cached:
+        if (datetime.datetime.now()-movie.trailer_cached) > datetime.timedelta(days=3):
+            return json.dumps({"url":movie.trailer_cached})
+
+    youtube =  gdata.youtube.service.YouTubeService()
+    query =  gdata.youtube.service.YouTubeVideoQuery()
+    query.vq = "%s (%s) trailer"%(movie.title, movie.year or "")
+
+    feed = youtube.YouTubeQuery(query)
+    if len(feed.entry):
+        vidya = feed.entry[0].link[0].href.replace("watch?v=",'v/')
+        movie.trailer_cached = datetime.datetime.now()
+        movie.trailer_url = vidya
+        try:
+            db.session.add(movie)
+            db.session.commit()
+        except Exception,e:
+            print "Cannot add movie cache: %s"%e
+            db.session.rollback()
+        return vidya
+        #return trailer_source % (vidya, vidya)
+    return "not_found"
+
 
 
 @app.route("/api/randommovie")
@@ -231,15 +331,14 @@ def recommendations():
         return abort(400)
 
     user_likes = user.movies_liked
-    shit_they_like = db.session.query(Movie.recomendations).filter(Movie.imdb_id.in_(user_likes))\
-                                                           .filter(Movie.recomendations != None)\
+    shit_they_like = db.session.query(Movie.imdb_id, Movie.title, Movie.recomendations).filter(Movie.imdb_id.in_(user_likes))\
+                                                           .filter(Movie.recomendations != None) \
                                                            .filter(Movie.recomendations != []).limit(150).all()
 
 
     id_counters = defaultdict(int)
-
     for item in shit_they_like:
-        for id in item[0]:
+        for id in item[2]:
             if not id in user.movies_hidden and not id in user.movies_liked:
                 id_counters[id]+=1
 
@@ -247,14 +346,18 @@ def recommendations():
     item_ids = sorted_stuff[-10:]
     items = db.session.query(Movie).filter(Movie.imdb_id.in_([x[0] for x in item_ids])).all()
 
+    linked_by = {}
+    for movie in items:
+        x = []
+        for id, title, movie_recommendations in shit_they_like:
+            if movie.imdb_id in movie_recommendations:
+                x.append(title)
+        linked_by[movie.imdb_id] = x
+
     time_taken = time.time() - t1
     print "Time taken to process recommendations: %s"%time_taken
 
-    return json.dumps([{"id":i.imdb_id,"poster":i.get_poster_url(),
-                        "title":i.title,"year":i.year,
-                        "director":i.director, "score":i.imdb_score,
-                        "imdb_id":i.imdb_string_id
-                        } for i in items])
+    return json.dumps([i.toJson(linked_by=linked_by[i.imdb_id]) for i in items])
 
 
 @app.route("/api/recommendation", methods=["PUT"])
@@ -341,16 +444,27 @@ def userMovie(id):
     return "success"
 
 
-@app.route("/login")
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
+
+@app.route('/login')
 def login():
     return facebook.authorize(callback=url_for('facebook_authorized',
-        next=request.args.get('next') or request.referrer or
-             None,
+        next=request.args.get('next') or request.referrer or None,
         _external=True))
 
+
 @app.route('/login/authorized')
-def facebook_authorized():
-    session['oauth_token'] = (request.args.get('access_token',''), '')
+@facebook.authorized_handler
+def facebook_authorized(resp):
+    if resp is None:
+        return 'Access denied: reason=%s error=%s' % (
+            request.args['error_reason'],
+            request.args['error_description']
+            )
+    session['oauth_token'] = (resp['access_token'], '')
     me = facebook.get('/me')
 
     if not db.session.query(User).filter_by(user_id=me.data["id"]).count():
