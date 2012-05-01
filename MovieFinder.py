@@ -8,6 +8,7 @@ from flask.ext.oauth import OAuth
 from flask.ext.celery import Celery
 from celery.task.sets import TaskSet
 from collections import defaultdict
+from sqlalchemy import not_, and_
 import json
 import datetime
 import urllib2
@@ -54,14 +55,14 @@ class Movie(db.Model):
     def get_poster_url(self):
         return url_for("static", filename="posters/%s/%s.jpg"%(str(self.imdb_id)[0], self.imdb_id))
 
-    def toJson(self, linked_by):
+    def toJson(self, linked_by=None):
         x =  {jk:getattr(self, k) or "unknown" for jk,k in [
             ("id","imdb_id"), ("poster","poster_url"),
             ("title","title"),("year","year"),("director","director"),
             ("score","imdb_score"),("imdb_id","imdb_string_id"),
             ("genre","genre"),("rating_uk","rating_uk"),("rating_usa","rating_usa"),
             ("languages","languages"),("plot_outline","plot_outline"),
-            ("stars","stars"),
+            ("stars","stars"),("tomatoes_score", "tomatoes_score")
         ]}
         if linked_by:
             x["linked_by"] = ", ".join(linked_by)
@@ -75,6 +76,7 @@ class User(db.Model):
     user_id = db.Column(db.BigInteger(), primary_key=True)
     movies_liked = db.Column(postgres.ARRAY(db.Integer), default=[])
     movies_hidden = db.Column(postgres.ARRAY(db.Integer), default=[])
+    movies_queued = db.Column(postgres.ARRAY(db.Integer), default=[])
 
 
     def get_movies_liked(self):
@@ -109,6 +111,48 @@ facebook = oauth.remote_app('facebook',
 _old_render = render_template
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.162 Safari/535.19"
+
+@celery.task(name="MovieFinder.GetRottenTomatoesScore", rate_limit="1/s", default_retry_delay=100)
+def GetRottenTomatoesScore(imdb_id):
+    try:
+        movie_db = Movie.query.filter_by(imdb_id=imdb_id).one()
+    except NoResultFound:
+        print "[RottenTomatoes] Movie %s not found"%imdb_id
+        return
+
+    api_url = "http://api.rottentomatoes.com/api/public/v1.0/movie_alias.json?type=imdb&id=%s&apikey=%s"%(
+        movie_db.imdb_string_id, app.config["ROTTEN_TOMATOES_API_KEY"])
+    try:
+        data = json.loads(urllib2.urlopen(api_url).read())
+    except urllib2.HTTPError,e:
+        if e.code == 403:
+            print "[RottenTomatoes] API error 403, retrying in 100"
+            return GetRottenTomatoesScore.retry()
+        print "[RottenTomatoes] Could not get rotten tomatoes score: %s"%e
+        print api_url
+        return
+
+    if "error" in data:
+        print "[RottenTomatoes] Could not get tomatoes score for %s (%s): %s"%(movie_db.title, movie_db.imdb_string_id,
+                                                                               data["error"])
+        return
+
+    try:
+        movie_db.tomatoes_score = data["ratings"]["critics_score"]
+    except KeyError:
+        print "[RottenTomatoes] Error getting ratings/critics_rating key"
+        return
+
+    if movie_db.tomatoes_score >= 0:
+        try:
+            db.session.add(movie_db)
+            db.session.commit()
+            print "[RottenTomatoes] Movie '%s' scored %s"%(movie_db.title, movie_db.tomatoes_score)
+        except Exception,e:
+            print "[RottenTomatoes] Error committing score: %s"%e
+            db.session.rollback()
+    else:
+        print "[RottenTomatoes] Movie '%s' scored below 0"%(movie_db.title)
 
 @celery.task(name="MovieFinder.GetRecommendations")
 def GetRecommendations(movie_id):
@@ -261,7 +305,10 @@ def AddMovie(movie_id, get_recommendations=True):
 
     if get_recommendations:
         print "Getting recommendations..."
-        GetRecommendations(movie_db.imdb_id)
+        GetRecommendations.apply_async((movie_db.imdb_id,))
+
+    if not movie_db.tomatoes_score:
+        GetRottenTomatoesScore.apply_async((movie_db.imdb_id,))
 
     db.session.close()
 
@@ -276,7 +323,7 @@ def index():
     if not user:
         return render_template("connect.html")
 
-    return render_template("index.html", placeholder=random_movie())
+    return render_template("index.html", placeholder=random_movie(), user=user)
 
 
 
@@ -319,6 +366,42 @@ def random_movie():
     except NoResultFound:
         return ""
 
+@app.route("/api/queue/<int:id>", methods=["PUT","GET","DELETE"])
+def addtoqueue(id):
+    user = get_user()
+    if not user:
+        return abort(400)
+    if request.method == "GET":
+        try:
+            db_item = db.session.query(Movie).filter_by(imdb_id=id).one()
+            return json.dumps(db_item.toJson())
+        except NoResultFound:
+            return abort(404)
+
+    if request.method == "PUT":
+        try:
+            data = json.loads(request.data)
+        except Exception:
+            return abort(400)
+
+        if not id in user.movies_queued:
+            db.session.query(User).filter(User.user_id == user.user_id).update(
+                    {User.movies_queued:User.movies_queued.op("+")([int(data["id"])])}, synchronize_session=False
+            )
+            db.session.commit()
+
+        return "saved"
+
+
+@app.route("/api/getqueue",methods=["GET"])
+def getqueue():
+    user = get_user()
+    if not user:
+        return abort(400)
+    return json.dumps([x.toJson() for x in db.session.query(Movie) \
+                                                                    .filter(Movie.imdb_id.in_(user.movies_queued)).all()
+                    ])
+
 @app.route("/api/getrecommendations")
 def recommendations():
 
@@ -331,33 +414,36 @@ def recommendations():
         return abort(400)
 
     user_likes = user.movies_liked
-    shit_they_like = db.session.query(Movie.imdb_id, Movie.title, Movie.recomendations).filter(Movie.imdb_id.in_(user_likes))\
-                                                           .filter(Movie.recomendations != None) \
-                                                           .filter(Movie.recomendations != []).limit(150).all()
+    user_queue = user.movies_queued
+    shit_they_like = db.session.query(Movie.imdb_id, Movie.title, Movie.recomendations)\
+                                                .filter(and_(Movie.imdb_id.in_(user_likes),
+                                                            not_(Movie.imdb_id.in_(user_queue)))) \
+                                                .filter(Movie.recomendations != None) \
+                                                .filter(Movie.recomendations != []).limit(150).all()
 
 
     id_counters = defaultdict(int)
     for item in shit_they_like:
         for id in item[2]:
-            if not id in user.movies_hidden and not id in user.movies_liked:
+            if not ((id in user.movies_hidden) or (id in user.movies_queued)) and not id in user.movies_liked:
                 id_counters[id]+=1
 
     sorted_stuff = sorted(id_counters.iteritems(), key=operator.itemgetter(1))
     item_ids = sorted_stuff[-10:]
-    items = db.session.query(Movie).filter(Movie.imdb_id.in_([x[0] for x in item_ids])).all()
+    item_ids.reverse()
+    items = {x.imdb_id:x for x in db.session.query(Movie).filter(Movie.imdb_id.in_([x[0] for x in item_ids])).all()}
 
     linked_by = {}
     for movie in items:
         x = []
         for id, title, movie_recommendations in shit_they_like:
-            if movie.imdb_id in movie_recommendations:
+            if items[movie].imdb_id in movie_recommendations:
                 x.append(title)
-        linked_by[movie.imdb_id] = x
+        linked_by[items[movie].imdb_id] = x
 
     time_taken = time.time() - t1
     print "Time taken to process recommendations: %s"%time_taken
-
-    return json.dumps([i.toJson(linked_by=linked_by[i.imdb_id]) for i in items])
+    return json.dumps([items[i[0]].toJson(linked_by=linked_by[items[i[0]].imdb_id]) for i in item_ids])
 
 
 @app.route("/api/recommendation", methods=["PUT"])
@@ -370,17 +456,29 @@ def recommendation():
         data = json.loads(request.data)
     except Exception:
         return abort(400)
-    print user.movies_hidden
-    if data["hidden"]:
+    if "queued" in data:
+        if data["queued"]:
+            print "Queuing %s"%data["id"]
+            db.session.query(User).filter(User.user_id == user.user_id).update(
+                    {User.movies_queued:User.movies_queued.op("+")([int(data["id"])])}, synchronize_session=False
+            )
+        else:
+            print "Unqueueing %s"%data["id"]
+            db.session.query(User).filter(User.user_id == user.user_id).update(
+                    {User.movies_queued:User.movies_queued.op("-")([int(data["id"])])}, synchronize_session=False
+            )
+
+    if "hidden" in data:
         print "hidden shit"
         if not int(data["id"]) in user.movies_hidden:
             print "hiding..."
             db.session.query(User).filter(User.user_id == user.user_id).update(
                     {User.movies_hidden:User.movies_hidden.op("+")([int(data["id"])])}, synchronize_session=False
             )
-            db.session.commit()
+    db.session.commit()
 
     return "success"
+
 
 @app.route("/api/movies")
 def getMovies():
@@ -434,6 +532,12 @@ def userMovie(id):
     else:
         GetRecommendations.apply_async((string_id,))
 
+    if id in user.movies_queued:
+        db.session.query(User).filter(User.user_id == user.user_id).update(
+                {User.movies_queued:User.movies_queued.op("-")([id])}, synchronize_session=False
+        )
+        db.session.commit()
+
     if not id in user.movies_liked:
         db.session.query(User).filter(User.user_id == user.user_id).update(
                 {User.movies_liked:User.movies_liked.op("+")([id])}, synchronize_session=False
@@ -477,7 +581,7 @@ def facebook_authorized(resp):
 
     session["auth_user"] = me.data["id"]
 
-    return redirect(url_for("index"))
+    return redirect("/#search")
 
 
 @facebook.tokengetter

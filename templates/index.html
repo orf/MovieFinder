@@ -125,6 +125,7 @@
 
             $.getScript('{{ url_for('static', filename='js/movie.js') }}');
 
+
             $("#button_show_rec").click(function(){
                 app.navigate("",true)
             });
@@ -142,6 +143,17 @@
                 <a href="#" class="delete_movie_item" data-id="<%= object['id'] %>">x</a>
             </div>
         </div>
+    </script>
+
+    <script type="text/template" id="moviequeue_template">
+        <% _.each(objects, function(obj) { %>
+            <div class="row">
+                <%= obj.get('title') %>
+                <div class="pull-right">
+                    <a href="#" class="view_queue_item" data-id="<%= obj.get('id') %>">view</a>
+                </div>
+            </div>
+        <% }); %>
     </script>
 
     <script type="text/template" id="template_search_results">
@@ -170,8 +182,6 @@
     <script type="text/template" id="search_view">
         <p>Have a search for some movies you have watched and enjoyed -
             this will help us to build a personalised recommendation list for you</p>
-        <strong>Movies you like on Facebook:</strong>
-        <div id="facebook_movies"></div>
         <br />
         <div class="input-append">
             <input placeholder="{{ placeholder }}" style="height:30px; font-size:15pt;"
@@ -207,7 +217,16 @@
                                 <h4><a target="_blank" href="http://www.imdb.com/title/tt<%= rec.get('imdb_id') %>">
                                 <%= rec.get('title') %> (<%= rec.get('year') %>)</a></h4>
                                 <p><small><%= rec.get('plot_outline') %></small></p>
-                                <p><small>Recommended by: <%= rec.get('linked_by') %></small></p>
+                                <% if (!app.moviequeue.get(rec.get('id'))) { %>
+                                <p><small>Recommended because you liked: <em><%= rec.get('linked_by') %></em></small></p>
+                                <% } else { %>
+                                <br />
+                                <br />
+                                <a class="btn btn-info"
+                                   onclick='app.movieSuggestions.fetch();'>
+                                    <i class="icon-arrow-left icon-white"></i> Back to results
+                                </a>
+                                <% } %>
                             </td>
                             <td>
                                 <p>Directed by <%= rec.get('director') %></p>
@@ -217,6 +236,15 @@
                                         <%= rec.get('score') %>
                                     </a>
                                 </p>
+                                <% if (rec.get('tomatoes_score') != 'unknown') { %>
+                                <p><strong>Rotten tomatoes score:</strong>
+
+                                    <a href="http://www.rottentomatoes.com/search/?search=<%= rec.get('title') %>"
+                                       target="_blank">
+                                        <%= rec.get('tomatoes_score') %>
+                                    </a>
+                                </p>
+                                <% } %>
                                 <p>
                                     <strong>Genre:</strong>
                                     <%= rec.get('genre') %>
@@ -241,13 +269,19 @@
                                             <i class="icon-thumbs-up icon-white"></i>
                                         </a>
                                         <a class="btn btn-danger"
-                                           title="Hide this movie"
+                                           title="I disliked this movie"
                                            onclick="handleRecommendedDislikeClick(<%= rec.get('id') %>)">
                                             <i class="icon-thumbs-down icon-white"></i>
                                         </a>
-                                        <a class="btn btn-primary" title="Add to my watchlist">
+                                        <% if (!app.moviequeue.get(rec.get('id'))) { %>
+                                        <a class="btn btn-primary" onclick="HandleAddQueueClick(<%= rec.get('id') %>)" title="Add to my watchlist">
                                             <i class=" icon-plus icon-white"></i>
                                         </a>
+                                        <% } else { %>
+                                        <a class="btn btn-inverse remove_button" x-id="<%= rec.get('id') %>" title="Remove from my watchlist">
+                                            <i class="icon-minus icon-white"></i>
+                                        </a>
+                                        <% } %>
                                         <a id="trailer_video" class="btn btn-info"
                                            onclick="HandleTrailerClick(<%= rec.get('id') %>)">
                                             <i class="icon-film"></i>
@@ -287,6 +321,15 @@
             <i class="icon-white icon-search"></i>
             Search for some more movies
         </a></p>
+
+        <div class="well">
+            <p>
+                <h4>Your queue</h4>
+            </p>
+
+            <ul id="movieQueue"></ul>
+
+        </div>
 
         <div class="well">
             <p>

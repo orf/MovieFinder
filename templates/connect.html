@@ -1,17 +1,15 @@
 {% extends "layout.html" %}
 
-
-
-
 {% block page_header %}Please connect with us first{% endblock %}
 
 {% block body %}
     <div class="span12">
-        <p>Click below to login with facebook. We don't post anything and only use it to save your movie history</p>
+        <p>Click below to login with facebook. We don't post anything and only use it to save you having to sign up here.</p>
     </div>
     <div class="span4 offset5">
-        <a href="{{ url_for('login') }}">Login bro</a>
-        <div class="fb-login-button" scope="user_likes">Login with Facebook</div>
+        <a class="btn btn-success" href="{{ url_for('login') }}">
+            <i class=" icon-plus icon-white"></i>
+            Connect</a>
     </div>
 {% endblock %}
 

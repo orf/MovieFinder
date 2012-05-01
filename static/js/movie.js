@@ -9,12 +9,19 @@ window.MovieCollection = Backbone.Collection.extend({
 });
 
 window.MovieRecomendation = Backbone.Model.extend({
-    url:"/api/recommendation"
+    url:"/api/recommendation",
+    urlroot:"/api/recommendation"
 });
 
 window.MovieRecommendationCollection = Backbone.Collection.extend({
     model:MovieRecomendation,
     url:"/api/getrecommendations"
+    //urlroot:"/api/recommendation"
+});
+
+window.MovieQueueCollection = Backbone.Collection.extend({
+    model:MovieRecomendation,
+    url:"/api/getqueue"
 });
 
 
@@ -85,9 +92,23 @@ window.RecommendationsView = Backbone.View.extend({
 
     render: function(){
         $("#pheader").text("Your recommendations");
-        console.log(this.model.models);
         var template = _.template($("#recommendations_view").html(), {objects:this.model.models});
         $("#main").html( template );
+
+        $(".remove_button").click(function(){
+            var movie = app.moviequeue.get($(this).attr("x-id"));
+            app.moviequeue.remove(movie);
+            movie.set("queued", false);
+            movie.save();
+            $(this).removeClass("btn btn-inverse remove_button").addClass("btn btn-primary")
+                    .attr("title", "Add to my watchlist");
+            console.log(this);
+            $(this).unbind("click");
+            $(this).click(function(){
+                HandleAddQueueClick(movie.get("id"));
+            });
+            $(this).find("i").removeClass("icon-minus icon-white").addClass("icon-plus icon-white");
+        });
 
         return this;
     }
@@ -101,13 +122,55 @@ window.RecommendationItemView = Backbone.View.extend({
     }
 });
 
-function handleSearchClick(id, title){
+window.MovieQueueView = Backbone.View.extend({
+    initialize: function(){
+        var that = this;
+        this.model.bind("reset", this.render, this);
+        this.model.bind("add", function(movie) {
+            that.render();
+        });
+        this.model.bind("remove", function(){
+            that.render();
+        });
+        this.render();
+    },
 
+    render: function(){
+
+        var template = _.template($("#moviequeue_template").html(), {objects:this.model.models});
+        $("#movieQueue").html( template );
+
+        $(".view_queue_item").click(function(){
+            var movie = app.moviequeue.get($(this).attr("data-id"));
+            if (movie){
+                app.movieSuggestions.reset();
+                app.movieSuggestions.add(movie);
+            }
+        })
+
+    }
+});
+
+function handleSearchClick(id, title){
     var movie = new Movie({id:id, title:title});
     app.movielist.add(movie);
     movie.save();
     $("#"+id+"_search").hide();
 }
+
+function HandleAddQueueClick(id){
+    var movie = app.movieSuggestions.get(id);
+    console.log("Movie:");
+    console.log(movie);
+    app.moviequeue.add(movie);
+    app.movieSuggestions.remove(movie);
+    movie.set("queued",true);
+    movie.save();
+    console.log("fetching...");
+    app.movieSuggestions.fetch();
+
+}
+
 
 function handleRecommendedLikeClick(id){
     // Make a new movie and add it to the shiz
@@ -116,8 +179,9 @@ function handleRecommendedLikeClick(id){
     var movie = new Movie({"id":recommended.get("imdb_id"),
                        "title":recommended.get("title")});
     app.movielist.add(movie);
+    movie.set("queue", false);
     movie.save();
-
+    app.moviequeue.remove(recommended);
     app.movieSuggestions.remove(recommended);
     app.movieSuggestions.fetch();
 }
@@ -125,9 +189,10 @@ function handleRecommendedLikeClick(id){
 function handleRecommendedDislikeClick(id){
     // Make sure the user doesn't see this film again
     var recommended = app.movieSuggestions.get(id);
-
     recommended.set("hidden",true);
+    recommended.set("queue", false);
     recommended.save();
+    app.moviequeue.remove(recommended);
     app.movieSuggestions.remove(recommended);
     app.movieSuggestions.fetch();
 
@@ -136,7 +201,7 @@ function handleRecommendedDislikeClick(id){
 var AppRouter  = Backbone.Router.extend({
     routes:{
         "search":"search",
-        ".*":"recommendations"
+        "":"recommendations"
     },
 
     search:function(){
@@ -157,6 +222,11 @@ var AppRouter  = Backbone.Router.extend({
         this.movielist = new MovieCollection();
         this.movielistView = new MovieView({model:this.movielist});
         this.movielist.fetch();
+
+        this.moviequeue = new MovieQueueCollection();
+        this.moviequeueView = new MovieQueueView({model:this.moviequeue});
+        this.moviequeue.fetch();
+
     },
 
 
