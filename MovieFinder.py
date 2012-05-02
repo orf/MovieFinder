@@ -27,8 +27,8 @@ app.config.from_object('settings')
 
 if not app.debug:
     import logging
-    from logging.handlers import TimedRotatingFileHandler
-    file_handler = TimedRotatingFileHandler("logs/app.log")
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler("logs/app.log")
     file_handler.setLevel(logging.WARNING)
     app.logger.addHandler(file_handler)
 

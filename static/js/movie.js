@@ -172,6 +172,8 @@ function HandleAddQueueClick(id){
     movie.set("queued",true);
     movie.save({},{success:function(){
         app.movieSuggestions.fetch();
+    }, error: function(){
+        app.movieSuggestions.fetch()
     }});
 }
 
@@ -188,6 +190,10 @@ function handleRecommendedLikeClick(id){
         app.moviequeue.remove(recommended);
         app.movieSuggestions.remove(recommended);
         app.movieSuggestions.fetch();
+    }, error: function(){
+        app.moviequeue.remove(recommended);
+        app.movieSuggestions.remove(recommended);
+        app.movieSuggestions.fetch();
     }});
 }
 
@@ -195,6 +201,10 @@ function handleRecommendedDislikeClick(id){
     // Make sure the user doesn't see this film again
     var recommended = app.movieSuggestions.get(id);
     recommended.save({"hidden":true, "queue":false}, {success:function(){
+        app.moviequeue.remove(recommended);
+        app.movieSuggestions.remove(recommended);
+        app.movieSuggestions.fetch();
+    }, error: function(){
         app.moviequeue.remove(recommended);
         app.movieSuggestions.remove(recommended);
         app.movieSuggestions.fetch();
