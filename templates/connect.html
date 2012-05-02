@@ -1,15 +1,116 @@
 {% extends "layout.html" %}
 
-{% block page_header %}Please connect with us first{% endblock %}
+{% block page_header %}Please login{% endblock %}
+
+{% block head %}
+    {% if signup_error %}
+        <script type="text/javascript">
+            $(document).ready(function(){
+                $('#signupModal').modal()
+            })
+        </script>
+    {% endif %}
+{% endblock %}
 
 {% block body %}
-    <div class="span12">
-        <p>Click below to login with facebook. We don't post anything and only use it to save you having to sign up here.</p>
+    <div class="span8 offset2">
+        <div class="row">
+            <div class="span4">
+                <form class="well form-horizontal" method="POST" action="{{ url_for('login_account') }}">
+                    <p>
+                        <h4>Login</h4>
+                    </p>
+                    {% if login_error %}
+                    <p>
+                        <em>
+                            {% if login_error == 'NotGiven' %}Please fill in the username and password
+                            {% elif login_error == 'InvalidCredentials' %}Invalid username and/or password!
+                            {% endif %}
+                        </em>
+                    </p>
+                    {% endif %}
+                    <fieldset>
+                        <div class="control-group {% if login_error %}error{% endif %}">
+                            <input type="text" class="input large"
+                                   placeholder="Email"
+                                   value="{% if email %}{{ email }}{% endif %}"
+                                   name="email">
+                        </div>
+                    </fieldset>
+                    <fieldset>
+                        <div class="control-group {% if login_error %}error{% endif %}">
+                            <input type="password" class="input" placeholder="Password" name="pass">
+                        </div>
+                    </fieldset>
+                        <button type="submit" class="btn btn-success">
+                            <i class="icon-ok icon-white"></i>
+                            Login</button>
+                        <a class="btn btn-info" data-toggle="modal" href="#signupModal">
+                            <i class=" icon-plus icon-white"></i>
+                            Sign Up
+                        </a>
+                </form>
+            </div>
+            <div class="well span3">
+                <p>
+                    <h4>Alternative Methods</h4>
+                </p>
+                <a class="btn btn-primary" href="{{ url_for('login') }}">
+                    <i class="icon-user icon-white"></i>
+                    Login using Facebook</a>
+            </div>
+        </div>
     </div>
-    <div class="span4 offset5">
-        <a class="btn btn-success" href="{{ url_for('login') }}">
-            <i class=" icon-plus icon-white"></i>
-            Connect</a>
+
+    <div class="modal hide fade in" id="signupModal">
+        <div class="modal-header">
+            <button class="close" data-dismiss="modal">×</button>
+            <h3>Sign Up</h3>
+        </div>
+        <div class="modal-body">
+            {% if signup_error == 'NotGiven' %}
+                <em>Please fill in all fields</em>
+            {% elif signup_error == 'PasswordMatch' %}
+                <em>The passwords did not match</em>
+            {% elif signup_error == 'EmailExists' %}
+                <em>An account with that email already exists</em>
+            {% elif signup_error == 'InvalidEmail' %}
+                <em>Invalid email address</em>
+            {% endif %}
+            <p>
+            <form class="form-horizontal" method="POST" action="{{ url_for('signup_account') }}" id="signup_account">
+                <fieldset>
+                    <div class="control-group {% if signup_error in ('NotGiven','InvalidEmail','EmailExists') %}error{% endif %}">
+                        <label class="control-label" for="email_signup">Email</label>
+                        <div class="controls">
+                            <input type="text" class="input large" id="email_signup" name="email" value="{{ email_signup }}">
+                        </div>
+                    </div>
+                </fieldset>
+                <fieldset>
+                    <div class="control-group {% if signup_error in ('PasswordMatch','NotGiven') %}error{% endif %}">
+                        <label class="control-label" for="password_signup">Password</label>
+                        <div class="controls">
+                            <input type="password" class="input" id="password_signup" name="password">
+                        </div>
+                    </div>
+                </fieldset>
+                <fieldset>
+                    <div class="control-group {% if signup_error in ('PasswordMatch','NotGiven') %}error{% endif %}">
+                        <label class="control-label" for="password_signup2">Password again</label>
+                        <div class="controls">
+                            <input type="password" class="input" id="password_signup2" name="password2">
+                        </div>
+                    </div>
+                </fieldset>
+            </form>
+            </p>
+        </div>
+        <div class="modal-footer">
+            <a href="#" data-dismiss="modal" class="btn">Cancel</a>
+            <button type="submit" class="btn btn-primary" onclick="$('#signup_account').submit()">Sign up</button>
+        </div>
     </div>
+
 {% endblock %}
 

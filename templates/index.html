@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 
 {% block fb_methods %}
-    FB.getLoginStatus(function(response) {
+    /*FB.getLoginStatus(function(response) {
         console.log("Response");
         console.log(response);
         if (response.status === 'connected') {
@@ -14,19 +14,10 @@
         } else {
             window.location = "{{ url_for('logout') }}";
         }
-        });
+        });*/
 {% endblock %}
 
 {% block head %}
-    <script src="{{ url_for('static', filename='js/underscore.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/json2.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/backbone.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/bootstrap.js') }}"></script>
-    <link href="{{ url_for('static', filename='css/jquery.fancybox-1.3.4.css') }}" rel="stylesheet" media="screen">
-    <script src="{{ url_for('static', filename='js/jquery.fancybox-1.3.4.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/spin.js') }}"></script>
-
     <script type="text/javascript">if (window.location.hash == '#_=_')window.location.hash = '';</script>
 
     <script type="text/javascript">
@@ -146,14 +137,22 @@
     </script>
 
     <script type="text/template" id="moviequeue_template">
-        <% _.each(objects, function(obj) { %>
-            <div class="row">
-                <%= obj.get('title') %>
-                <div class="pull-right">
-                    <a href="#" class="view_queue_item" data-id="<%= obj.get('id') %>">view</a>
+        <div class="well">
+            <p>
+                <h4>Your queue</h4>
+            </p>
+
+            <ul>
+            <% _.each(objects, function(obj) { %>
+                <div class="row">
+                    <%= obj.get('title') %>
+                    <div class="pull-right">
+                        <a href="#" class="view_queue_item" data-id="<%= obj.get('id') %>">view</a>
+                    </div>
                 </div>
-            </div>
-        <% }); %>
+            <% }); %>
+            </ul>
+        </div>
     </script>
 
     <script type="text/template" id="template_search_results">
@@ -322,12 +321,7 @@
             Search for some more movies
         </a></p>
 
-        <div class="well">
-            <p>
-                <h4>Your queue</h4>
-            </p>
-
-            <ul id="movieQueue"></ul>
+        <div id="movieQueue">
 
         </div>
 

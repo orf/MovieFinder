@@ -49,6 +49,7 @@ window.MovieView = Backbone.View.extend({
         if (item){
             item.destroy();
         }
+        app.movieSuggestions.fetch();
     },
 
     render:function (eventName) {
@@ -135,8 +136,12 @@ window.MovieQueueView = Backbone.View.extend({
         this.render();
     },
 
-    render: function(){
-
+    render: function(force){
+        console.log(this.model.models.length);
+        if (this.model.models == 0){
+            $("#movieQueue").html("");
+            return
+        }
         var template = _.template($("#moviequeue_template").html(), {objects:this.model.models});
         $("#movieQueue").html( template );
 
@@ -165,10 +170,9 @@ function HandleAddQueueClick(id){
     app.moviequeue.add(movie);
     app.movieSuggestions.remove(movie);
     movie.set("queued",true);
-    movie.save();
-    console.log("fetching...");
-    app.movieSuggestions.fetch();
-
+    movie.save({},{success:function(){
+        app.movieSuggestions.fetch();
+    }});
 }
 
 
@@ -180,22 +184,21 @@ function handleRecommendedLikeClick(id){
                        "title":recommended.get("title")});
     app.movielist.add(movie);
     movie.set("queue", false);
-    movie.save();
-    app.moviequeue.remove(recommended);
-    app.movieSuggestions.remove(recommended);
-    app.movieSuggestions.fetch();
+    movie.save({}, {success:function(){
+        app.moviequeue.remove(recommended);
+        app.movieSuggestions.remove(recommended);
+        app.movieSuggestions.fetch();
+    }});
 }
 
 function handleRecommendedDislikeClick(id){
     // Make sure the user doesn't see this film again
     var recommended = app.movieSuggestions.get(id);
-    recommended.set("hidden",true);
-    recommended.set("queue", false);
-    recommended.save();
-    app.moviequeue.remove(recommended);
-    app.movieSuggestions.remove(recommended);
-    app.movieSuggestions.fetch();
-
+    recommended.save({"hidden":true, "queue":false}, {success:function(){
+        app.moviequeue.remove(recommended);
+        app.movieSuggestions.remove(recommended);
+        app.movieSuggestions.fetch();
+    }});
 }
 
 var AppRouter  = Backbone.Router.extend({

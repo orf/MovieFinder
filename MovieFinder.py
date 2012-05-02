@@ -1,6 +1,6 @@
 from flask import render_template, request, Flask, url_for, session, redirect, abort
 from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import ProgrammingError, ResourceClosedError
 from sqlalchemy.sql import func
 from sqlalchemy.dialects import postgres
 from flask.ext.sqlalchemy import SQLAlchemy
@@ -16,13 +16,22 @@ import os
 import operator
 from imdb import IMDb, IMDbDataAccessError
 import gdata.youtube.service
-import urllib
+from werkzeug.security import check_password_hash, generate_password_hash
+from lepl.apps.rfc3696 import Email
 
 def make_app():
     return Flask("MovieFinder")
 
 app = make_app()
 app.config.from_object('settings')
+
+if not app.debug:
+    import logging
+    from logging.handlers import TimedRotatingFileHandler
+    file_handler = TimedRotatingFileHandler("logs/app.log")
+    file_handler.setLevel(logging.WARNING)
+    app.logger.addHandler(file_handler)
+
 db = SQLAlchemy(app)
 #db.engine.echo = True
 celery = Celery(app)
@@ -73,7 +82,13 @@ class Movie(db.Model):
 
 class User(db.Model):
     __tablename__ = "users"
-    user_id = db.Column(db.BigInteger(), primary_key=True)
+    user_id = db.Column(db.Integer(), primary_key=True)
+    # For signed up accounts
+    user_email = db.Column(db.String(), nullable=True, unique=True)
+    user_password = db.Column(db.String(), nullable=True)
+    # For facebook accounts
+    fb_user_id = db.Column(db.BigInteger(), nullable=True, unique=True)
+
     movies_liked = db.Column(postgres.ARRAY(db.Integer), default=[])
     movies_hidden = db.Column(postgres.ARRAY(db.Integer), default=[])
     movies_queued = db.Column(postgres.ARRAY(db.Integer), default=[])
@@ -86,7 +101,7 @@ class User(db.Model):
         return Movie.query.filter(Movie.imdb_id.in_(self.movies_liked)).all()
 
 try:
-    db.session.execute("CREATE EXTENSION intarray")
+    db.session.execute("CREATE extension intarray")
 except ProgrammingError:
     db.session.rollback()
 
@@ -105,7 +120,7 @@ facebook = oauth.remote_app('facebook',
     authorize_url='https://www.facebook.com/dialog/oauth',
     consumer_key=app.config["FACEBOOK_APP_ID"],
     consumer_secret=app.config["FACEBOOK_APP_SECRET"],
-    request_token_params={'scope': 'email,user_likes'}
+    request_token_params={'scope': 'email'}
 )
 
 _old_render = render_template
@@ -114,9 +129,13 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.19 (KHTML, lik
 
 @celery.task(name="MovieFinder.GetRottenTomatoesScore", rate_limit="1/s", default_retry_delay=100)
 def GetRottenTomatoesScore(imdb_id):
+    with celery.flask_app.test_request_context():
+        return _GetRottenTomatoesScore(imdb_id)
+
+def _GetRottenTomatoesScore(imdb_id):
     try:
-        movie_db = Movie.query.filter_by(imdb_id=imdb_id).one()
-    except NoResultFound:
+        movie_db = db.session.query(Movie).filter_by(imdb_id=imdb_id).one()
+    except Exception:
         print "[RottenTomatoes] Movie %s not found"%imdb_id
         return
 
@@ -144,8 +163,8 @@ def GetRottenTomatoesScore(imdb_id):
         return
 
     if movie_db.tomatoes_score >= 0:
+        db.session.add(movie_db)
         try:
-            db.session.add(movie_db)
             db.session.commit()
             print "[RottenTomatoes] Movie '%s' scored %s"%(movie_db.title, movie_db.tomatoes_score)
         except Exception,e:
@@ -155,10 +174,14 @@ def GetRottenTomatoesScore(imdb_id):
         print "[RottenTomatoes] Movie '%s' scored below 0"%(movie_db.title)
 
 @celery.task(name="MovieFinder.GetRecommendations")
-def GetRecommendations(movie_id):
+def GetRecommendations(imdb_id):
+    with celery.flask_app.test_request_context():
+        return _GetRecommendations(imdb_id)
+
+def _GetRecommendations(movie_id):
     try:
-        movie_db = Movie.query.filter_by(imdb_id=movie_id).one()
-    except NoResultFound:
+        movie_db = db.session.query(Movie).filter_by(imdb_id=movie_id).one()
+    except Exception:
         print "Movie %s not found"%movie_id
         return
 
@@ -189,14 +212,18 @@ def GetRecommendations(movie_id):
 
 
 @celery.task(name="MovieFinder.AddMovie", default_retry_delay=30)
-def AddMovie(movie_id, get_recommendations=True):
+def AddMovie(*args, **kwargs):
+    with celery.flask_app.test_request_context():
+        return _AddMovie(*args, **kwargs)
+
+def _AddMovie(movie_id, get_recommendations=True):
     print "Processing movie %s"%movie_id
 
     string_id = movie_id
     movie_id = int(movie_id) # Truncates the leading 0's :(
 
     try:
-        movie_db = Movie.query.filter_by(imdb_id=movie_id).one()
+        movie_db = db.session.query(Movie).filter_by(imdb_id=movie_id).one()
     except Exception:
         movie_db = Movie()
         movie_db.imdb_id = movie_id
@@ -331,7 +358,7 @@ def index():
 def get_trailer(id):
     try:
         movie = db.session.query(Movie).filter_by(imdb_id=id).one()
-    except NoResultFound:
+    except Exception:
         return abort(404)
 
     if movie.trailer_cached:
@@ -358,12 +385,11 @@ def get_trailer(id):
     return "not_found"
 
 
-
 @app.route("/api/randommovie")
 def random_movie():
     try:
         return db.session.query(Movie.title).order_by(func.random()).limit(1).one()[0]
-    except NoResultFound:
+    except Exception:
         return ""
 
 @app.route("/api/queue/<int:id>", methods=["PUT","GET","DELETE"])
@@ -375,7 +401,7 @@ def addtoqueue(id):
         try:
             db_item = db.session.query(Movie).filter_by(imdb_id=id).one()
             return json.dumps(db_item.toJson())
-        except NoResultFound:
+        except Exception:
             return abort(404)
 
     if request.method == "PUT":
@@ -443,7 +469,7 @@ def recommendations():
 
     time_taken = time.time() - t1
     print "Time taken to process recommendations: %s"%time_taken
-    return json.dumps([items[i[0]].toJson(linked_by=linked_by[items[i[0]].imdb_id]) for i in item_ids])
+    return json.dumps([items[i].toJson(linked_by=linked_by[items[i].imdb_id]) for i in items])
 
 
 @app.route("/api/recommendation", methods=["PUT"])
@@ -477,7 +503,7 @@ def recommendation():
             )
     db.session.commit()
 
-    return "success"
+    return request.data
 
 
 @app.route("/api/movies")
@@ -545,7 +571,71 @@ def userMovie(id):
 
         db.session.commit()
 
-    return "success"
+    return request.data
+
+
+class InvalidPassword(Exception):
+    pass
+
+
+@app.route("/signup_account", methods=["POST","GET"])
+def signup_account():
+    if request.method == "GET":
+        return redirect("/")
+    email = request.form.get("email", None)
+    password = request.form.get("password", None)
+    password_check = request.form.get("password2", None)
+
+    if not all([email, password, password_check]):
+        return render_template("connect.html", signup_error='NotGiven',
+        email_signup=email)
+
+    if not password == password_check:
+        return render_template("connect.html", signup_error="PasswordMatch",
+        email_signup=email)
+
+    if db.session.query(User).filter(User.user_email == email).count():
+        return render_template("connect.html", signup_error="EmailExists",
+                    email_signup=email)
+    else:
+        vd = Email()
+        if not vd(email):
+            return render_template("connect.html", signup_error="InvalidEmail",
+                    email_signup=email)
+        # Make an account
+        user = User()
+        user.user_email = email
+        user.user_password = generate_password_hash(password)
+        db.session.add(user)
+        db.session.commit()
+        session["auth_user"] = user.user_id
+
+        return redirect("/")
+
+
+@app.route("/login_account", methods=["POST", "GET"])
+def login_account():
+    if request.method == "GET":
+        return redirect("/")
+    email = request.form.get("email", None)
+    password = request.form.get("pass", None)
+
+    if not all([email, password]):
+        return render_template("connect.html", login_error='NotGiven',
+        email=email)
+
+    try:
+        user_db = db.session.query(User).filter(User.user_email == email).one()
+        if not check_password_hash(user_db.user_password, password):
+            raise InvalidPassword
+    except (NoResultFound, InvalidPassword):
+        return render_template("connect.html", login_error="InvalidCredentials",
+            email=email)
+
+    # Validated!
+    session["auth_user"] = user_db.user_id
+    return redirect("/")
+
 
 
 @app.route("/logout")
@@ -571,15 +661,16 @@ def facebook_authorized(resp):
     session['oauth_token'] = (resp['access_token'], '')
     me = facebook.get('/me')
 
-    if not db.session.query(User).filter_by(user_id=me.data["id"]).count():
-        # Make a user
-        u = User()
-        u.user_id = me.data["id"]
-        db.session.add(u)
+    try:
+        user = db.session.query(User).filter_by(fb_user_id=me.data["id"]).one()
+    except NoResultFound:
+        user = User()
+        user.fb_user_id = me.data["id"]
+        db.session.add(user)
         db.session.commit()
         print "Created a user account for ID %s"%me.data["id"]
 
-    session["auth_user"] = me.data["id"]
+    session["auth_user"] = user.user_id
 
     return redirect("/#search")
 
@@ -606,4 +697,4 @@ if __name__ == "__main__":
         sys.exit(0)
     signal.signal(signal.SIGTERM, exit_handler)
 
-    app.run()
+    app.run(host="0.0.0.0")
