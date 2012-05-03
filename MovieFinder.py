@@ -1,4 +1,4 @@
-from flask import render_template, request, Flask, url_for, session, redirect, abort
+from flask import render_template, request, Flask, url_for, session, redirect, abort, make_response
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import ProgrammingError, ResourceClosedError
 from sqlalchemy.sql import func
@@ -499,21 +499,29 @@ def recommendations():
     filter_language = request.args.get("language","").lower()
     filter_genre   = request.args.get("genre", "").lower()
 
+
+    db_time_1 = time.time()
     shit_they_like = db.session.query(Movie.imdb_id, Movie.title, Movie.recomendations)\
                                                 .filter(and_(Movie.imdb_id.in_(user_likes),
                                                             not_(Movie.imdb_id.in_(user_queue)))) \
                                                 .filter(Movie.recomendations != None) \
                                                 .filter(Movie.recomendations != []).limit(150).all()
-
+    time_db_like = str(round(time.time() - db_time_1, 6))
 
     id_counters = defaultdict(int)
 
+    counter_time_1 = time.time()
     for item in shit_they_like:
         for id in item[2]:
             if not ((id in user.movies_hidden) or (id in user.movies_queued)) and not id in user.movies_liked:
                 id_counters[id]+=1
 
+    time_counter = str(round(time.time() - counter_time_1, 6))
+
+    time_filter = None
+
     if filter_imdb_score != 0 or filter_type != "all" or filter_language or filter_genre:
+        time_filter = time.time()
         rec_query = db.session.query(Movie.imdb_id).filter(Movie.imdb_id.in_(id_counters.keys()))
         if filter_imdb_score > 0:
             rec_query = rec_query.filter(Movie.imdb_score >= filter_imdb_score)
@@ -527,11 +535,14 @@ def recommendations():
             elif filter_type == "movie":
                 rec_query = rec_query.filter(Movie.type == "movie")
 
-        print rec_query.as_scalar()
         liked_ids = [i[0] for i in rec_query.all()]
         for id in id_counters.keys():
             if id not in liked_ids:
                 del id_counters[id]
+
+        time_filter = str(round(time.time() - time_filter, 6))
+
+    rest_time = time.time()
 
     sorted_stuff = sorted(id_counters.iteritems(), key=operator.itemgetter(1))
     item_ids = sorted_stuff[-10:]
@@ -568,7 +579,16 @@ def recommendations():
 
         to_dump.append(item.toJson(linked_by=linked))
 
-    return json.dumps(to_dump)
+    response = make_response(json.dumps(to_dump))
+
+    rest_time =  str(round(time.time() - rest_time, 6))
+
+    response.headers["X-time-db_like"] = time_db_like
+    response.headers["X-time-time_counter"] = time_counter
+    if time_filter:
+        response.headers["X-time-time_filter"] = time_filter
+    response.headers["X-time-rest_time"] = rest_time
+    return response
 
 
 @app.route("/api/recommendation", methods=["PUT"])
