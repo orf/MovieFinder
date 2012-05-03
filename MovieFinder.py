@@ -287,7 +287,7 @@ def _AddMovie(movie_id, get_recommendations=True):
         if "movie" in movie.get("kind"):
             movie_db.type = "movie"
         else:
-            movie_db.type = movie.get("tv series")
+            movie_db.type = "tv series"
     else:
         print "Movie %s has no kind key - defaulting to movie"%(movie_id)
         movie_db.type = "movie"
@@ -403,7 +403,6 @@ def index():
         return render_template("connect.html")
 
     return render_template("index.html", placeholder=random_movie(), user=user)
-
 
 
 #@app.route("/api/get_trailer/<int:id>")
