@@ -241,6 +241,7 @@ var AppRouter  = Backbone.Router.extend({
         $("#button_show_rec").show();
         $("#button_show_search").hide();
         $("#filter_results").hide();
+        $("#side_refresh").hide();
 
         window.setupSearch();
 
@@ -266,6 +267,7 @@ var AppRouter  = Backbone.Router.extend({
         $("#button_show_rec").hide();
         $("#button_show_search").show();
         $("#filter_results").show();
+        $("#side_refresh").show();
         this.renderSideBar();
     }
 

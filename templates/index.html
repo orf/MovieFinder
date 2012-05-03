@@ -62,6 +62,10 @@
                 }
             });
 
+            $("#side_refresh").click(function(){
+                app.movieSuggestions.fetch();
+            });
+
             $("#language_refresh").click(function(){
                 app.movieSuggestions.fetch();
             });
@@ -402,7 +406,11 @@
         <a id="button_show_search" class="btn btn-success btn-large">
             <i class="icon-white icon-search"></i>
             Search for some more movies
-        </a></p>
+        </a>
+            <button class="btn btn-large" id="side_refresh" type="button">
+                <i class="icon-refresh"></i>
+            </button>
+        </p>
 
         <div id="movieQueue">
 

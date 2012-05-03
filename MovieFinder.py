@@ -196,12 +196,15 @@ def _GetRottenTomatoesScore(imdb_id):
     else:
         print "[RottenTomatoes] Movie '%s' scored below 0"%(movie_db.title)
 
-@celery.task(name="MovieFinder.GetRecommendations")
-def GetRecommendations(imdb_id):
+@celery.task(name="MovieFinder.GetRecommendations", default_retry_delay=30)
+def GetRecommendations(imdb_id, retry_count=0):
+    if retry_count > 5:
+        print "Tried recommendations for ID %s 5 times, giving up"
+        return
     with celery.flask_app.test_request_context():
-        return _GetRecommendations(imdb_id)
+        return _GetRecommendations(imdb_id, retry_count)
 
-def _GetRecommendations(movie_id):
+def _GetRecommendations(movie_id, _rcount):
     try:
         movie_db = db.session.query(Movie).filter_by(imdb_id=movie_id).one()
     except Exception:
@@ -218,7 +221,11 @@ def _GetRecommendations(movie_id):
     else:
         if not data["status"] == 200:
             print "Error: status code %s"%data["status"]
+            GetRecommendations.retry()
         else:
+            if not "next" in data["model"]:
+                print "No data found, retrying in %s"%(str(5*_rcount))
+                GetRecommendations.retry(args=(movie_id, _rcount+1), countdown=5*_rcount)
             ids_to_get = [obj["display"]["titleId"].lstrip("tt") for obj in data["model"]["items"]]
             ids_that_exist = set([x[0] for x in db.session.query(Movie.imdb_string_id).filter(Movie.imdb_id.in_(ids_to_get))])
             ids_that_dont_exist = set(ids_to_get) - ids_that_exist
@@ -227,7 +234,6 @@ def _GetRecommendations(movie_id):
             ])
             job.apply_async()
             print "Dispatched %s jobs"%len(ids_that_dont_exist)
-
             movie_db.recomendations = [int(x) for x in ids_to_get]
 
             db.session.add(movie_db)
