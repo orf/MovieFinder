@@ -15,7 +15,22 @@ window.MovieRecomendation = Backbone.Model.extend({
 
 window.MovieRecommendationCollection = Backbone.Collection.extend({
     model:MovieRecomendation,
-    url:"/api/getrecommendations"
+    url:function(){
+        var filter_type = $("#filter_type").val();
+        var filter_score = $("#filter_imdb_score").val();
+        var url = "/api/getrecommendations?type=" + filter_type + "&imdb_score=" + filter_score;
+
+        if (!$("#moreOptions").is(":hidden")){
+            if ($("#language_input").val() != ""){
+                url = url + "&language="+$("#language_input").val();
+            }
+            if ($("#genre_input").val() != ""){
+                url = url + "&genre="+$("#genre_input").val();
+            }
+        }
+
+        return url
+    }
     //urlroot:"/api/recommendation"
 });
 
@@ -225,6 +240,7 @@ var AppRouter  = Backbone.Router.extend({
         console.log("search set");
         $("#button_show_rec").show();
         $("#button_show_search").hide();
+        $("#filter_results").hide();
 
         window.setupSearch();
 
@@ -249,6 +265,7 @@ var AppRouter  = Backbone.Router.extend({
         this.movieSuggestions.fetch();
         $("#button_show_rec").hide();
         $("#button_show_search").show();
+        $("#filter_results").show();
         this.renderSideBar();
     }
 

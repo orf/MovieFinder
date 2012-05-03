@@ -8,7 +8,7 @@ from flask.ext.oauth import OAuth
 from flask.ext.celery import Celery
 from celery.task.sets import TaskSet
 from collections import defaultdict
-from sqlalchemy import not_, and_
+from sqlalchemy import not_, and_, Index
 import json
 import datetime
 import urllib2
@@ -41,19 +41,21 @@ class Movie(db.Model):
     imdb_id         = db.Column(db.Integer(), primary_key=True)
     imdb_string_id  = db.Column(db.String(), unique=True) # *real* IMDB id
     # Metadata
+
+    type            = db.Column(db.String(), index=True) # TV series or movie
+    series_years    = db.Column(db.String(), nullable=True)
+    number_of_seasons = db.Column(db.Integer(), nullable=True)
+
     title           = db.Column(db.String())
-    year            = db.Column(db.Integer(), nullable=True)
+    year            = db.Column(db.Integer(), nullable=True, index=True)
     director        = db.Column(db.String(), nullable=True)
-    genre           = db.Column(db.String(), nullable=True)
+    genres          = db.Column(postgres.ARRAY(db.String()), default=[])
     poster_url      = db.Column(db.String(), nullable=True)
     rating_uk       = db.Column(db.String(), nullable=True)
     rating_usa      = db.Column(db.String(), nullable=True)
-    languages       = db.Column(db.String(), nullable=True)
+    languages       = db.Column(postgres.ARRAY(db.String()), default=[])
     plot_outline    = db.Column(db.String(), nullable=True)
     stars           = db.Column(db.String(), nullable=True)
-
-    trailer_url = db.Column(db.String(), nullable=True)
-    trailer_cached = db.Column(db.DateTime(), nullable=True)
 
     # Scores + recommendations + date cached
     date_cached     = db.Column(db.DateTime(), nullable=True)
@@ -69,10 +71,15 @@ class Movie(db.Model):
             ("id","imdb_id"), ("poster","poster_url"),
             ("title","title"),("year","year"),("director","director"),
             ("score","imdb_score"),("imdb_id","imdb_string_id"),
-            ("genre","genre"),("rating_uk","rating_uk"),("rating_usa","rating_usa"),
+            ("genres","genres"),("rating_uk","rating_uk"),("rating_usa","rating_usa"),
             ("languages","languages"),("plot_outline","plot_outline"),
-            ("stars","stars"),("tomatoes_score", "tomatoes_score")
+            ("stars","stars"),("tomatoes_score", "tomatoes_score"),
+            ("type","type"),("seasons","number_of_seasons"),("series_years","series_years")
         ]}
+
+        if self.genres:
+            x["genre"] = ", ".join(self.genres)
+
         if linked_by:
             x["linked_by"] = ", ".join(linked_by)
         else:
@@ -110,6 +117,22 @@ try:
     db.create_all()
 except Exception:
     pass
+
+INDEXES = (Index('imdb_string_id_hash_index', Movie.imdb_string_id, postgresql_using='hash'),
+           Index('recommendations_index', Movie.recomendations, postgresql_using='gin',
+                                                                postgresql_ops={"recomendations": 'gin__int_ops'}),
+           Index('languages_index', Movie.languages, postgresql_using='gin'),
+           Index('title_index', Movie.title, postgresql_using='hash'),
+    )
+
+for ix in INDEXES:
+    try:
+        ix.create(db.engine)
+    except Exception, e:
+        #print e
+        pass
+
+
 
 oauth = OAuth()
 
@@ -245,6 +268,21 @@ def _AddMovie(movie_id, get_recommendations=True):
         print "Movie ID %s is not completed yet (%s) - stopping"%(movie_id,movie.get("production status"))
         return
 
+    if "kind" in movie.keys():
+        if "movie" in movie.get("kind"):
+            movie_db.type = "movie"
+        else:
+            movie_db.type = movie.get("tv series")
+    else:
+        print "Movie %s has no kind key - defaulting to movie"%(movie_id)
+        movie_db.type = "movie"
+
+    if movie_db.type == "tv series":
+        if "number of seasons" in movie.keys():
+            movie_db.number_of_seasons = movie.get("number of seasons")
+        if "series years" in movie.keys():
+            movie_db.series_years = movie.get("series years") or "?-?"
+
     movie_db.title = movie.get("title")
     movie_db.year = movie.get("year")
 
@@ -256,7 +294,7 @@ def _AddMovie(movie_id, get_recommendations=True):
     movie_db.date_cached = datetime.datetime.now()
 
     if "genres" in movie.keys():
-        movie_db.genre = ", ".join(movie.get("genres"))
+        movie_db.genres = [x.lower() for x in movie.get("genres")]
 
     if "certificates" in movie.keys():
         certs = movie.get("certificates")
@@ -268,10 +306,10 @@ def _AddMovie(movie_id, get_recommendations=True):
                 movie_db.rating_usa = csplit[1]
 
     if "languages" in movie.keys():
-        movie_db.languages = ", ".join(movie.get("languages"))
+        movie_db.languages = [x.lower() for x in movie.get("languages")]
 
     if "plot outline" in movie.keys():
-        movie_db.plot_outline = movie.get("plot outline")
+        movie_db.plot_outline = movie.get("plot outline") or "Plot outline not available"
 
     if "cast" in movie.keys():
         movie_db.stars = ", ".join(
@@ -289,6 +327,12 @@ def _AddMovie(movie_id, get_recommendations=True):
         print "Handled ID %s"%movie_id
         print "Rating: %s"%movie_db.imdb_score
 
+    if get_recommendations:
+        print "Getting recommendations..."
+        GetRecommendations.apply_async((movie_db.imdb_id,))
+
+    if not movie_db.tomatoes_score and movie_db.type == "movie":
+        GetRottenTomatoesScore.apply_async((movie_db.imdb_id,))
 
     if "cover url" in movie.keys():
         try:
@@ -329,13 +373,6 @@ def _AddMovie(movie_id, get_recommendations=True):
         except Exception,e:
             print "Could not set poster_url: %s"%e
             db.session.rollback()
-
-    if get_recommendations:
-        print "Getting recommendations..."
-        GetRecommendations.apply_async((movie_db.imdb_id,))
-
-    if not movie_db.tomatoes_score:
-        GetRottenTomatoesScore.apply_async((movie_db.imdb_id,))
 
     db.session.close()
 
@@ -441,6 +478,12 @@ def recommendations():
 
     user_likes = user.movies_liked
     user_queue = user.movies_queued
+
+    filter_type = request.args.get("type","all")
+    filter_imdb_score = request.args.get("imdb_score",0,type=int)
+    filter_language = request.args.get("language","").lower()
+    filter_genre   = request.args.get("genre", "").lower()
+
     shit_they_like = db.session.query(Movie.imdb_id, Movie.title, Movie.recomendations)\
                                                 .filter(and_(Movie.imdb_id.in_(user_likes),
                                                             not_(Movie.imdb_id.in_(user_queue)))) \
@@ -449,15 +492,39 @@ def recommendations():
 
 
     id_counters = defaultdict(int)
+
     for item in shit_they_like:
         for id in item[2]:
             if not ((id in user.movies_hidden) or (id in user.movies_queued)) and not id in user.movies_liked:
                 id_counters[id]+=1
 
+    if filter_imdb_score != 0 or filter_type != "all" or filter_language or filter_genre:
+        rec_query = db.session.query(Movie.imdb_id).filter(Movie.imdb_id.in_(id_counters.keys()))
+        if filter_imdb_score > 0:
+            rec_query = rec_query.filter(Movie.imdb_score >= filter_imdb_score)
+        if filter_language:
+            rec_query = rec_query.filter(Movie.languages.op("@>")("{%s}"%filter_language))
+        if filter_genre:
+            rec_query = rec_query.filter(Movie.genres.op("@>")("{%s}"%filter_genre))
+        if filter_type in ("movie","tv"):
+            if filter_type == "tv":
+                rec_query = rec_query.filter(Movie.type == "tv series")
+            elif filter_type == "movie":
+                rec_query = rec_query.filter(Movie.type == "movie")
+
+        print rec_query.as_scalar()
+        liked_ids = [i[0] for i in rec_query.all()]
+        for id in id_counters.keys():
+            if id not in liked_ids:
+                del id_counters[id]
+
     sorted_stuff = sorted(id_counters.iteritems(), key=operator.itemgetter(1))
     item_ids = sorted_stuff[-10:]
     item_ids.reverse()
-    items = {x.imdb_id:x for x in db.session.query(Movie).filter(Movie.imdb_id.in_([x[0] for x in item_ids])).all()}
+
+    rec_query = db.session.query(Movie).filter(Movie.imdb_id.in_([x[0] for x in item_ids]))
+
+    items = {x.imdb_id:x for x in rec_query.all()}
 
     linked_by = {}
     for movie in items:
@@ -469,7 +536,24 @@ def recommendations():
 
     time_taken = time.time() - t1
     print "Time taken to process recommendations: %s"%time_taken
-    return json.dumps([items[i].toJson(linked_by=linked_by[items[i].imdb_id]) for i in items])
+
+    to_dump = []
+    for i in item_ids:
+        try:
+            item = items[i[0]]
+        except KeyError:
+            print "KeyError with item: %s"%i[0]
+            continue
+
+        try:
+            linked = linked_by[i[0]]
+        except KeyError:
+            print "KeyError with linked_by: %s"%i[0]
+            linked = None
+
+        to_dump.append(item.toJson(linked_by=linked))
+
+    return json.dumps(to_dump)
 
 
 @app.route("/api/recommendation", methods=["PUT"])
@@ -562,14 +646,13 @@ def userMovie(id):
         db.session.query(User).filter(User.user_id == user.user_id).update(
                 {User.movies_queued:User.movies_queued.op("-")([id])}, synchronize_session=False
         )
-        db.session.commit()
 
     if not id in user.movies_liked:
         db.session.query(User).filter(User.user_id == user.user_id).update(
                 {User.movies_liked:User.movies_liked.op("+")([id])}, synchronize_session=False
         )
 
-        db.session.commit()
+    db.session.commit()
 
     return request.data
 

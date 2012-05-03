@@ -18,7 +18,7 @@
 {% endblock %}
 
 {% block head %}
-    <script type="text/javascript">if (window.location.hash == '#_=_')window.location.hash = '';</script>
+    <script type="text/javascript" xmlns="http://www.w3.org/1999/html">if (window.location.hash == '#_=_')window.location.hash = '';</script>
 
     <script type="text/javascript">
 
@@ -44,7 +44,35 @@
             return this.replace(new RegExp(str1.replace(/([\,\!\\\^\$\{\}\[\]\(\)\.\*\+\?\|\<\>\-\&])/g, function(c){return "\\" + c;}), "g"+(ignore?"i":"")), str2);
         };
 
+        String.prototype.capitalize = function() {
+            return this.charAt(0).toUpperCase() + this.slice(1);
+        };
+
         $(document).ready(function(){
+
+            $("#moreOptions").hide();
+
+            $("#moreClick").click(function(ev){
+                ev.preventDefault();
+                $("#moreOptions").toggle();
+                if ($("#moreOptions").is(":hidden")){
+                    $("#moreClick").text("More options");
+                } else {
+                    $("#moreClick").text("Less options");
+                }
+            });
+
+            $("#language_refresh").click(function(){
+                app.movieSuggestions.fetch();
+            });
+
+            $("#filter_type").change(function(){
+                app.movieSuggestions.fetch();
+            });
+
+            $("#filter_imdb_score").change(function(){
+                app.movieSuggestions.fetch();
+            });
 
             window.HandleTrailerClick = function(movie_id){
 
@@ -52,7 +80,12 @@
                 $("#movie_"+movie_id+">#trailer_video").addClass("disabled");
 
                 var movie = app.movieSuggestions.get(movie_id);
-                var search_title = movie.get("title") + " (" + movie.get("year") + ") trailer";
+                var type = movie.get("type");
+                if (type == "feature"){
+                    type = "movie"
+                }
+                var search_title = movie.get("title") + " " + type + " (" + movie.get("year") + ") trailer";
+                console.log("Searching for "+search_title);
                 var url = "https://gdata.youtube.com/feeds/api/videos?alt=json-in-script&q="+encodeURI(search_title);
 
                 $.ajax({
@@ -98,7 +131,7 @@
                         window[function_name] = function(results){
                             $("#results_table").find("tbody>tr").remove();
 
-                            var results = _.filter(results["d"], function(result){ return ("q" in result && result["q"] == "feature")});
+                            var results = _.filter(results["d"], function(result){ return ("q" in result && result["q"] in {"feature":"","TV series":""})});
                             $("#results_table").find("tbody").html(result_template({results:results}));
 
                             delete window[function_name];
@@ -122,6 +155,7 @@
             });
 
             $("#button_show_search").click(function(){
+
                 app.navigate("search",true)
             });
         })
@@ -171,7 +205,10 @@
                 <td>
                     <p>
                         <h3><%= result["l"] %> (<%= result["y"] %>)</h3>
-                        <em><%= result["s"] %></em>
+                        <p><em>Type: <% if (result["q"] == "feature") { %> Movie
+                            <% } else { %> <%= result["q"] %><% } %>
+                        </em></p>
+                        <p><em>Starring <%= result["s"] %></em></p>
                     </p>
                 </td>
             </tr>
@@ -214,7 +251,12 @@
                                      onerror="this.src = '{{ url_for("static",filename="img/no_cover_art.gif") }}'"></td>
                             <td class="span3">
                                 <h4><a target="_blank" href="http://www.imdb.com/title/tt<%= rec.get('imdb_id') %>">
-                                <%= rec.get('title') %> (<%= rec.get('year') %>)</a></h4>
+                                <%= rec.get('title') %> <% if (rec.get('type') == "movie") { %>
+                                        (<%= rec.get('year') %>)
+                                    <% } %></a></h4>
+                                <% if (rec.get('type') == "tv series") { %>
+                                    <p><small>Seasons: <%= rec.get('seasons') %> from <%= rec.get('series_years') %></small></p>
+                                <% } %>
                                 <p><small><%= rec.get('plot_outline') %></small></p>
                                 <% if (!app.moviequeue.get(rec.get('id'))) { %>
                                 <p><small>Recommended because you liked: <em><%= rec.get('linked_by') %></em></small></p>
@@ -228,7 +270,9 @@
                                 <% } %>
                             </td>
                             <td>
-                                <p>Directed by <%= rec.get('director') %></p>
+                                <p><strong>Type:</strong>
+                                    <% if (rec.get('type') == "movie") { %> Movie <% } else { %>TV Series <% } %>
+                                </p>
                                 <p><strong>IMDB score:</strong>
                                     <a href="http://www.imdb.com/title/tt<%= rec.get('imdb_id') %>"
                                             target="_blank">
@@ -245,8 +289,10 @@
                                 </p>
                                 <% } %>
                                 <p>
-                                    <strong>Genre:</strong>
-                                    <%= rec.get('genre') %>
+                                    <strong>Genres:</strong>
+                                    <% _.each(rec.get("genres"), function(gen) { %>
+                                        <%= gen.capitalize()%><% if (rec.get("genres").length != 1) { %>, <% } %>
+                                    <% }); %>
                                 </p>
                                 <p>
                                     <strong>Ratings:</strong>
@@ -254,7 +300,9 @@
                                 </p>
                                 <p>
                                     <strong>Languages:</strong>
-                                    <%= rec.get("languages") %>
+                                    <% _.each(rec.get("languages"), function(lang) { %>
+                                        <%= lang.capitalize()%><% if (rec.get("languages").length != 1) { %>, <% } %>
+                                    <% }); %>
                                 </p>
 
                                 <p><strong>Stars:</strong>
@@ -305,9 +353,45 @@
 {% block page_header %}{% endblock %}
 
 {% block body %}
+    <div class="span8">
+        <div class="row" id="filter_results">
+            <div class="span8">
+                <form id="filter_form" class="well form-inline">
+                    <p>
+                        Show me
+                        <select id="filter_type">
+                            <option value="all">TV shows and Movies</option>
+                            <option value="movie">Movies</option>
+                            <option value="tv">TV shows</option>
+                        </select>
+                        with an IMDB score above
+                        <select id="filter_imdb_score" class="span1">
+                            {% for i in range(10) %}
+                            <option>{{ i }}</option>
+                            {% endfor %}
+                        </select>
+                       <a href="#" id="moreClick" <small>More options</small></a>
+                    </p>
+                <div id="moreOptions">
+                    <div class="control-group controls">
+                        Available in
+                        <div class="input-append">
+                            <input type="text" id="language_input" class="input-small" placeholder="Language">
+                        </div>
+                        with the genres
+                        <div class="input-append">
+                            <input type="text" id="genre_input" class="input-medium" placeholder="Genre, Genre, Genre">
+                            <button class="btn" id="language_refresh" type="button">
+                                <i class="icon-refresh"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                </form>
 
-    <div class="span8" id="main">
-
+            </div>
+        </div>
+        <div id="main"></div>
     </div>
 
     <div class="span4">
@@ -315,7 +399,6 @@
             <i class="icon-white icon-ok"></i>
             Show me my recommendations
         </a>
-
         <a id="button_show_search" class="btn btn-success btn-large">
             <i class="icon-white icon-search"></i>
             Search for some more movies
