@@ -18,6 +18,15 @@ from imdb import IMDb, IMDbDataAccessError
 import gdata.youtube.service
 from werkzeug.security import check_password_hash, generate_password_hash
 from lepl.apps.rfc3696 import Email
+from celery.signals import worker_process_init
+
+@worker_process_init.connect
+def worker_init(*args, **kwargs):
+    import os
+    print "Disposing engine for pid %s"%os.getpid()
+    db.engine.dispose()
+    del os
+
 
 def make_app():
     return Flask("MovieFinder")
