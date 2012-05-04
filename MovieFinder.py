@@ -19,6 +19,7 @@ import gdata.youtube.service
 from werkzeug.security import check_password_hash, generate_password_hash
 from lepl.apps.rfc3696 import Email
 from celery.signals import worker_process_init
+from functools import wraps
 
 @worker_process_init.connect
 def worker_init(*args, **kwargs):
@@ -254,7 +255,7 @@ def AddMovie(*args, **kwargs):
     with celery.flask_app.test_request_context():
         return _AddMovie(*args, **kwargs)
 
-def _AddMovie(movie_id, get_recommendations=True):
+def _AddMovie(movie_id, get_recommendations=True, is_subtask=False):
     print "Processing movie %s"%movie_id
 
     string_id = movie_id
@@ -402,7 +403,7 @@ def index():
     if not user:
         return render_template("connect.html")
 
-    return render_template("index.html", placeholder=random_movie(), user=user)
+    return render_template("index.html", placeholder=random_movie().data, user=user)
 
 
 #@app.route("/api/get_trailer/<int:id>")
@@ -436,7 +437,21 @@ def get_trailer(id):
     return "not_found"
 
 
+def NoCache(f):
+    @wraps(f)
+    def _wrapper(*args, **kwargs):
+        re = f(*args, **kwargs)
+        if isinstance(re, basestring):
+            re = make_response(re)
+        re.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        re.headers["Pragma"] = "no-cache"
+        re.headers["Expires"] = "0"
+        return re
+
+    return _wrapper
+
 @app.route("/api/randommovie")
+@NoCache
 def random_movie():
     try:
         return db.session.query(Movie.title).order_by(func.random()).limit(1).one()[0]
@@ -444,6 +459,7 @@ def random_movie():
         return ""
 
 @app.route("/api/queue/<int:id>", methods=["PUT","GET","DELETE"])
+@NoCache
 def addtoqueue(id):
     user = get_user()
     if not user:
@@ -471,6 +487,7 @@ def addtoqueue(id):
 
 
 @app.route("/api/getqueue",methods=["GET"])
+@NoCache
 def getqueue():
     user = get_user()
     if not user:
@@ -480,6 +497,7 @@ def getqueue():
                     ])
 
 @app.route("/api/getrecommendations")
+@NoCache
 def recommendations():
 
     import time
@@ -591,6 +609,7 @@ def recommendations():
 
 
 @app.route("/api/recommendation", methods=["PUT"])
+@NoCache
 def recommendation():
     user = get_user()
     if not user:
@@ -625,6 +644,7 @@ def recommendation():
 
 
 @app.route("/api/movies")
+@NoCache
 def getMovies():
     user = get_user()
     if not user:
@@ -632,6 +652,7 @@ def getMovies():
     return json.dumps([{"id":x.imdb_id, "title":x.title} for x in user.get_movies_liked()])
 
 @app.route("/api/movies/<id>", methods=["PUT","DELETE"])
+@NoCache
 def userMovie(id):
     user = get_user()
     if not user:
@@ -727,7 +748,7 @@ def signup_account():
         db.session.commit()
         session["auth_user"] = user.user_id
 
-        return redirect("/")
+        return redirect("/#search")
 
 
 @app.route("/login_account", methods=["POST", "GET"])
