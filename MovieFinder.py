@@ -495,8 +495,10 @@ def getqueue():
     user = get_user()
     if not user:
         return abort(400)
-    return json.dumps([x.toJson() for x in db.session.query(Movie) \
-                                                                    .filter(Movie.imdb_id.in_(user.movies_queued)).all()
+    if not user.movies_queued:
+        return []
+    return json.dumps([x.toJson() for x in
+                       db.session.query(Movie).filter(Movie.imdb_id.in_(user.movies_queued)).all()
                     ])
 
 @app.route("/api/getrecommendations")
@@ -519,6 +521,9 @@ def recommendations():
     filter_language = request.args.get("language","").lower()
     filter_genre   = request.args.get("genre", "").lower()
 
+
+    if not user_likes:
+        return []
 
     db_time_1 = time.time()
     shit_they_like = db.session.query(Movie.imdb_id, Movie.title, Movie.recomendations)\
