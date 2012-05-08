@@ -210,11 +210,11 @@ def _GetRottenTomatoesScore(imdb_id, force_add=False):
         print "[RottenTomatoes] Movie '%s' scored below 0"%(movie_db.title)
 
 @celery.task(name="MovieFinder.GetRecommendations", default_retry_delay=10)
-def GetRecommendations(imdb_id, is_subtask):
+def GetRecommendations(imdb_id):
     with celery.flask_app.test_request_context():
-        return _GetRecommendations(imdb_id, is_subtask)
+        return _GetRecommendations(imdb_id)
 
-def _GetRecommendations(movie_id, is_subtask):
+def _GetRecommendations(movie_id):
     try:
         movie_db = db.session.query(Movie).filter_by(imdb_id=movie_id).one()
     except Exception:
@@ -235,13 +235,12 @@ def _GetRecommendations(movie_id, is_subtask):
         else:
             if not "next" in data["model"]:
                 print "No data found, retrying later"
-                GetRecommendations.retry(args=(movie_id, is_subtask,))
+                GetRecommendations.retry(args=(movie_id,))
             ids_to_get = [obj["display"]["titleId"].lstrip("tt") for obj in data["model"]["items"]]
             ids_that_exist = set([x[0] for x in db.session.query(Movie.imdb_string_id).filter(Movie.imdb_id.in_(ids_to_get))])
             ids_that_dont_exist = set(ids_to_get) - ids_that_exist
-            print "Is Subtask: %s"%(not is_subtask)
             job = TaskSet(tasks=[
-                AddMovie.subtask((id, False, not is_subtask)) for id in ids_that_dont_exist
+                AddMovie.subtask((id, False)) for id in ids_that_dont_exist
             ])
             job.apply_async()
             print "Dispatched %s jobs"%len(ids_that_dont_exist)
@@ -256,7 +255,7 @@ def AddMovie(*args, **kwargs):
     with celery.flask_app.test_request_context():
         return _AddMovie(*args, **kwargs)
 
-def _AddMovie(movie_id, get_recommendations=True, is_subtask=False):
+def _AddMovie(movie_id, get_recommendations=True):
     # is_subtask will be true if we are adding a recommendation to the database
     print "Processing movie %s"%movie_id
 
@@ -346,9 +345,9 @@ def _AddMovie(movie_id, get_recommendations=True, is_subtask=False):
         print "Handled ID %s"%movie_id
         print "Rating: %s"%movie_db.imdb_score
 
-    if get_recommendations or is_subtask:
+    if get_recommendations :
         print "Getting recommendations..."
-        GetRecommendations.apply_async((movie_db.imdb_id, is_subtask,))
+        GetRecommendations.apply_async((movie_db.imdb_id,))
 
     if not movie_db.tomatoes_score and movie_db.type == "movie":
         GetRottenTomatoesScore.apply_async((movie_db.imdb_id,))
