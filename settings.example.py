@@ -8,3 +8,5 @@ ROTTEN_TOMATOES_API_KEY = ""
 
 BROKER_URL = "amqp://user:password@localhost:5672/movies"
 CELERY_DISABLE_RATE_LIMITS = True
+GOOGLE_ANALYTICS_HOST = ""
+GOOGLE_ANALYTICS_ID = ""

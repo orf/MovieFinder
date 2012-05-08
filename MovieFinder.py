@@ -112,9 +112,8 @@ class User(db.Model):
 
 
     def get_movies_liked(self):
-        if not len(self.movies_liked):
+        if not self.movies_liked:
             return []
-
         return Movie.query.filter(Movie.imdb_id.in_(self.movies_liked)).all()
 
 try:
@@ -165,11 +164,15 @@ def GetRottenTomatoesScore(imdb_id):
     with celery.flask_app.test_request_context():
         return _GetRottenTomatoesScore(imdb_id)
 
-def _GetRottenTomatoesScore(imdb_id):
+def _GetRottenTomatoesScore(imdb_id, force_add=False):
     try:
         movie_db = db.session.query(Movie).filter_by(imdb_id=imdb_id).one()
     except Exception:
         print "[RottenTomatoes] Movie %s not found"%imdb_id
+        return
+
+    if movie_db.tomatoes_score and not force_add:
+        print "[RottenTomatoes] Not getting movie %s, force_add not given"%movie_db.title
         return
 
     api_url = "http://api.rottentomatoes.com/api/public/v1.0/movie_alias.json?type=imdb&id=%s&apikey=%s"%(
@@ -206,15 +209,12 @@ def _GetRottenTomatoesScore(imdb_id):
     else:
         print "[RottenTomatoes] Movie '%s' scored below 0"%(movie_db.title)
 
-@celery.task(name="MovieFinder.GetRecommendations", default_retry_delay=30)
-def GetRecommendations(imdb_id, retry_count=0):
-    if retry_count > 5:
-        print "Tried recommendations for ID %s 5 times, giving up"
-        return
+@celery.task(name="MovieFinder.GetRecommendations", default_retry_delay=10)
+def GetRecommendations(imdb_id, is_subtask):
     with celery.flask_app.test_request_context():
-        return _GetRecommendations(imdb_id, retry_count)
+        return _GetRecommendations(imdb_id, is_subtask)
 
-def _GetRecommendations(movie_id, _rcount):
+def _GetRecommendations(movie_id, is_subtask):
     try:
         movie_db = db.session.query(Movie).filter_by(imdb_id=movie_id).one()
     except Exception:
@@ -234,13 +234,14 @@ def _GetRecommendations(movie_id, _rcount):
             GetRecommendations.retry()
         else:
             if not "next" in data["model"]:
-                print "No data found, retrying in %s"%(str(5*_rcount))
-                GetRecommendations.retry(args=(movie_id, _rcount+1), countdown=5*_rcount)
+                print "No data found, retrying later"
+                GetRecommendations.retry(args=(movie_id, is_subtask,))
             ids_to_get = [obj["display"]["titleId"].lstrip("tt") for obj in data["model"]["items"]]
             ids_that_exist = set([x[0] for x in db.session.query(Movie.imdb_string_id).filter(Movie.imdb_id.in_(ids_to_get))])
             ids_that_dont_exist = set(ids_to_get) - ids_that_exist
+            print "Is Subtask: %s"%(not is_subtask)
             job = TaskSet(tasks=[
-                AddMovie.subtask((id, False)) for id in ids_that_dont_exist
+                AddMovie.subtask((id, False, not is_subtask)) for id in ids_that_dont_exist
             ])
             job.apply_async()
             print "Dispatched %s jobs"%len(ids_that_dont_exist)
@@ -256,6 +257,7 @@ def AddMovie(*args, **kwargs):
         return _AddMovie(*args, **kwargs)
 
 def _AddMovie(movie_id, get_recommendations=True, is_subtask=False):
+    # is_subtask will be true if we are adding a recommendation to the database
     print "Processing movie %s"%movie_id
 
     string_id = movie_id
@@ -301,6 +303,7 @@ def _AddMovie(movie_id, get_recommendations=True, is_subtask=False):
 
     movie_db.title = movie.get("title")
     movie_db.year = movie.get("year")
+    print "Title: %s | Year: %s"%(movie_db.title, movie_db.year)
 
     if movie.get("director"):
         # use the 1st one
@@ -343,9 +346,9 @@ def _AddMovie(movie_id, get_recommendations=True, is_subtask=False):
         print "Handled ID %s"%movie_id
         print "Rating: %s"%movie_db.imdb_score
 
-    if get_recommendations:
+    if get_recommendations or is_subtask:
         print "Getting recommendations..."
-        GetRecommendations.apply_async((movie_db.imdb_id,))
+        GetRecommendations.apply_async((movie_db.imdb_id, is_subtask,))
 
     if not movie_db.tomatoes_score and movie_db.type == "movie":
         GetRottenTomatoesScore.apply_async((movie_db.imdb_id,))
@@ -695,7 +698,7 @@ def userMovie(id):
         else:
             AddMovie.apply_async((string_id,))
     else:
-        GetRecommendations.apply_async((string_id,))
+        GetRecommendations.apply_async((string_id,False))
 
     if id in user.movies_queued:
         db.session.query(User).filter(User.user_id == user.user_id).update(
