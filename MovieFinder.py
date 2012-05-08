@@ -702,7 +702,7 @@ def userMovie(id):
         else:
             AddMovie.apply_async((string_id,))
     else:
-        GetRecommendations.apply_async((string_id,False))
+        GetRecommendations.apply_async((string_id,))
 
     if id in user.movies_queued:
         db.session.query(User).filter(User.user_id == user.user_id).update(
