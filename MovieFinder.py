@@ -142,7 +142,6 @@ for ix in INDEXES:
         pass
 
 
-
 oauth = OAuth()
 
 facebook = oauth.remote_app('facebook',
@@ -418,7 +417,7 @@ def index():
         return render_template("connect.html")
 
     try:
-        rand_movie = random_movie()
+        rand_movie = get_random_movie()
     except Exception,e:
         print "Error getting random movie: %s"%e
         rand_movie = ""
@@ -841,7 +840,18 @@ def login():
         _external=True))
 
 
+def handle_fb_error(func):
+    @wraps(func)
+    def _fb_error_handler(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except oauth.OAuthException,e:
+            return "Sorry, Facebook sent us some invalid data. Please go back and attempt to log in again. Sorry!"
+
+    return _fb_error_handler
+
 @app.route('/login/authorized')
+@handle_fb_error
 @facebook.authorized_handler
 def facebook_authorized(resp):
     if resp is None:
