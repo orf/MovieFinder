@@ -13,6 +13,12 @@ window.MovieRecomendation = Backbone.Model.extend({
     urlroot:"/api/recommendation"
 });
 
+window.MovieQueueItem = Backbone.Model.extend({
+    url:function(){
+        return "/api/queue/"+this.get("id");
+    }
+});
+
 window.MovieRecommendationCollection = Backbone.Collection.extend({
     model:MovieRecomendation,
     url:function(){
@@ -161,11 +167,7 @@ window.MovieQueueView = Backbone.View.extend({
         $("#movieQueue").html( template );
 
         $(".view_queue_item").click(function(){
-            var movie = app.moviequeue.get($(this).attr("data-id"));
-            if (movie){
-                app.movieSuggestions.reset();
-                app.movieSuggestions.add(movie);
-            }
+            app.navigate("queue/"+$(this).attr("data-id"), true);
         })
 
     }
@@ -176,6 +178,17 @@ function handleSearchClick(id, title){
     app.movielist.add(movie);
     movie.save();
     $("#"+id+"_search").hide();
+}
+
+function handleSearchQueueClick(id, title){
+    var _id = id.replaceAll("tt","");
+    var movie = new MovieQueueItem({id:_id, title:title, from_search:true});
+    movie.save();
+    app.moviequeue.add(movie);
+}
+
+function handleSearchRemoveQueueClick(id){
+    console.log(id);
 }
 
 function HandleAddQueueClick(id){
@@ -229,7 +242,20 @@ function handleRecommendedDislikeClick(id){
 var AppRouter  = Backbone.Router.extend({
     routes:{
         "search":"search",
-        "":"recommendations"
+        "":"recommendations",
+        "queue/:id":"view_queue_id"
+    },
+
+    view_queue_id:function(id){
+        console.log("View queue ID: "+id);
+
+        var movie = app.moviequeue.get(id);
+        if (movie){
+            //app.movieSuggestions.reset();
+            //app.movieSuggestions.add(movie);
+        }
+
+        this.renderSideBar();
     },
 
     search:function(){

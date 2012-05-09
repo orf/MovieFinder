@@ -204,6 +204,16 @@
                             <i class="icon-thumbs-up icon-white"></i>
                         </a>
                         <p></p>
+                        <% if (!app.moviequeue.get(result["id"])) { %>
+                            <a class="btn btn-primary" onclick='handleSearchQueueClick("<%= result["id"] %>", "<%= _.escape(result["l"]) %>")' title="Add to my watchlist">
+                                <i class=" icon-plus icon-white"></i>
+                            </a>
+                        <% } else { %>
+                            <a class="btn btn-inverse" onclick='handleSearchRemoveQueueClick(<%= result["id"] %>)' title="Remove from my watchlist">
+                                <i class="icon-minus icon-white"></i>
+                            </a>
+                        <% } %>
+                        <p></p>
                     </p>
                 </td>
                 <td>

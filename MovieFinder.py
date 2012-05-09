@@ -1,4 +1,4 @@
-from flask import render_template, request, Flask, url_for, session, redirect, abort, make_response
+from flask import render_template, request, Flask, url_for, session, redirect, abort, make_response, Response
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import ProgrammingError, ResourceClosedError
 from sqlalchemy.sql import func
@@ -159,6 +159,7 @@ _old_render = render_template
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.162 Safari/535.19"
 
+
 @celery.task(name="MovieFinder.GetRottenTomatoesScore", rate_limit="1/s", default_retry_delay=100)
 def GetRottenTomatoesScore(imdb_id):
     with celery.flask_app.test_request_context():
@@ -223,6 +224,7 @@ def _GetRecommendations(movie_id):
 
     print "Fetching recommendations for id %s"%movie_id
     RECOMENDATION_URL = "http://www.imdb.com/widget/recommendations/_ajax/adapter/shoveler?start=1&count=25&specs=p13nsims:tt"+str(movie_db.imdb_string_id)
+    print RECOMENDATION_URL
     req = urllib2.Request(RECOMENDATION_URL, headers={"User-Agent":USER_AGENT, "Host":"www.imdb.com"})
     try:
         data = json.loads(urllib2.urlopen(req).read())
@@ -235,7 +237,15 @@ def _GetRecommendations(movie_id):
         else:
             if not "next" in data["model"]:
                 print "No data found, retrying later"
+                if movie_db.recomendations == None:
+                    movie_db.recomendations = []
+                    try:
+                        db.session.add(movie_db)
+                        db.session.commit()
+                    except Exception:
+                        print "Error setting recomendations to []"
                 GetRecommendations.retry(args=(movie_id,))
+                return
             ids_to_get = [obj["display"]["titleId"].lstrip("tt") for obj in data["model"]["items"]]
             ids_that_exist = set([x[0] for x in db.session.query(Movie.imdb_string_id).filter(Movie.imdb_id.in_(ids_to_get))])
             ids_that_dont_exist = set(ids_to_get) - ids_that_exist
@@ -299,6 +309,8 @@ def _AddMovie(movie_id, get_recommendations=True):
             movie_db.number_of_seasons = movie.get("number of seasons")
         if "series years" in movie.keys():
             movie_db.series_years = movie.get("series years") or "?-?"
+        elif "year" in movie.keys():
+            movie_db.series_years = "%s-?"%(movie.get("year"))
 
     movie_db.title = movie.get("title")
     movie_db.year = movie.get("year")
@@ -405,7 +417,13 @@ def index():
     if not user:
         return render_template("connect.html")
 
-    return render_template("index.html", placeholder=random_movie().data, user=user)
+    try:
+        rand_movie = random_movie()
+    except Exception,e:
+        print "Error getting random movie: %s"%e
+        rand_movie = ""
+
+    return render_template("index.html", placeholder=rand_movie, user=user)
 
 
 #@app.route("/api/get_trailer/<int:id>")
@@ -443,20 +461,26 @@ def NoCache(f):
     @wraps(f)
     def _wrapper(*args, **kwargs):
         re = f(*args, **kwargs)
-        if isinstance(re, basestring):
-            re = make_response(re)
-        re.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        re.headers["Pragma"] = "no-cache"
-        re.headers["Expires"] = "0"
+        try:
+            if not isinstance(re, Response):
+                re = make_response(str(re))
+            re.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            re.headers["Pragma"] = "no-cache"
+            re.headers["Expires"] = "0"
+        except Exception:
+            pass
         return re
 
     return _wrapper
+
+def get_random_movie():
+    return db.session.query(Movie.title).order_by(func.random()).limit(1).one()[0].decode('utf-8')
 
 @app.route("/api/randommovie")
 @NoCache
 def random_movie():
     try:
-        return db.session.query(Movie.title).order_by(func.random()).limit(1).one()[0]
+        return get_random_movie()
     except Exception:
         return ""
 
@@ -479,13 +503,35 @@ def addtoqueue(id):
         except Exception:
             return abort(400)
 
+        print "Got data:"
+        print data
+
+        if "from_search" in data:
+            try:
+                db_item = db.session.query(Movie).filter_by(imdb_id=id).one()
+            except Exception:
+                # Make the stuff
+                print "Adding stuff"
+                movie = Movie()
+                movie.title = data["title"]
+                movie.imdb_id = id
+                movie.imdb_string_id = data["id"]
+                db.session.add(movie)
+                try:
+                    db.session.commit()
+                except Exception,e:
+                    print "Error adding new movie: %s"%e
+                    db.session.rollback()
+                else:
+                    AddMovie.apply_async((movie.imdb_string_id,True))
         if not id in user.movies_queued:
+            print id
+            print user.movies_queued
             db.session.query(User).filter(User.user_id == user.user_id).update(
                     {User.movies_queued:User.movies_queued.op("+")([int(data["id"])])}, synchronize_session=False
             )
             db.session.commit()
-
-        return "saved"
+        return data
 
 
 @app.route("/api/getqueue",methods=["GET"])
@@ -666,7 +712,6 @@ def userMovie(id):
         return abort(400)
 
     if request.method == "DELETE":
-
         id = int(id.lstrip("tt"))
         if id in user.movies_liked:
             db.session.query(User).filter(User.user_id == user.user_id).update(
@@ -704,7 +749,8 @@ def userMovie(id):
     else:
         GetRecommendations.apply_async((string_id,))
 
-    if id in user.movies_queued:
+
+    if id in user.movies_queued and not "queued" in data:
         db.session.query(User).filter(User.user_id == user.user_id).update(
                 {User.movies_queued:User.movies_queued.op("-")([id])}, synchronize_session=False
         )
