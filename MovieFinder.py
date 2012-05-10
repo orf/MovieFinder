@@ -20,6 +20,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from lepl.apps.rfc3696 import Email
 from celery.signals import worker_process_init
 from functools import wraps
+import hashlib
 
 @worker_process_init.connect
 def worker_init(*args, **kwargs):
@@ -110,6 +111,11 @@ class User(db.Model):
     movies_hidden = db.Column(postgres.ARRAY(db.Integer), default=[])
     movies_queued = db.Column(postgres.ARRAY(db.Integer), default=[])
 
+    def is_temp_account(self):
+        return self.user_email is None and self.fb_user_id is None
+
+    def make_account_code(self):
+        return hashlib.md5("%s-%s"%(self.user_id, app.config.SECRET_KEY)).hexdigest()
 
     def get_movies_liked(self):
         if not self.movies_liked:
@@ -140,7 +146,6 @@ for ix in INDEXES:
     except Exception, e:
         #print e
         pass
-
 
 
 oauth = OAuth()
@@ -417,7 +422,13 @@ def index():
     if not user:
         return render_template("connect.html")
 
-    return render_template("index.html", placeholder=random_movie().data, user=user)
+    try:
+        rand_movie = get_random_movie()
+    except Exception,e:
+        print "Error getting random movie: %s"%e
+        rand_movie = ""
+
+    return render_template("index.html", placeholder=rand_movie, user=user)
 
 
 #@app.route("/api/get_trailer/<int:id>")
@@ -467,11 +478,14 @@ def NoCache(f):
 
     return _wrapper
 
+def get_random_movie():
+    return db.session.query(Movie.title).order_by(func.random()).limit(1).one()[0].decode('utf-8')
+
 @app.route("/api/randommovie")
 @NoCache
 def random_movie():
     try:
-        return db.session.query(Movie.title).order_by(func.random()).limit(1).one()[0]
+        return get_random_movie()
     except Exception:
         return ""
 
@@ -686,13 +700,13 @@ def recommendation():
 
     return request.data
 
-
 @app.route("/api/movies")
 @NoCache
 def getMovies():
     user = get_user()
     if not user:
         return abort(400)
+    return json.dumps([{"id":x.imdb_id, "title":x.title} for x in user.get_movies_liked()])
     return json.dumps([{"id":x.imdb_id, "title":x.title} for x in user.get_movies_liked()])
 
 @app.route("/api/movies/<id>", methods=["PUT","DELETE"])
@@ -756,12 +770,30 @@ def userMovie(id):
     return request.data
 
 
+@app.route("/account")
+def account():
+    user = get_user()
+    if not user or not user.is_temp_account():
+        return redirect("/")
+
+    return render_template("account.html", user=user)
+
 class InvalidPassword(Exception):
     pass
 
-
 @app.route("/signup_account", methods=["POST","GET"])
 def signup_account():
+    _next_page = request.args.get("n",None)
+    from_temp_account = False
+    _template = "connect.html"
+    if _next_page == "ac":
+        current_user = get_user()
+        if current_user and not current_user.is_temp_account():
+            return redirect("/")
+        else:
+            from_temp_account = current_user
+            _template = "account.html"
+
     if request.method == "GET":
         return redirect("/")
     email = request.form.get("email", None)
@@ -769,28 +801,31 @@ def signup_account():
     password_check = request.form.get("password2", None)
 
     if not all([email, password, password_check]):
-        return render_template("connect.html", signup_error='NotGiven',
+        return render_template(_template, signup_error='NotGiven',
         email_signup=email)
 
     if not password == password_check:
-        return render_template("connect.html", signup_error="PasswordMatch",
+        return render_template(_template, signup_error="PasswordMatch",
         email_signup=email)
 
     if db.session.query(User).filter(User.user_email == email).count():
-        return render_template("connect.html", signup_error="EmailExists",
+        return render_template(_template, signup_error="EmailExists",
                     email_signup=email)
     else:
         vd = Email()
         if not vd(email):
-            return render_template("connect.html", signup_error="InvalidEmail",
+            return render_template(_template, signup_error="InvalidEmail",
                     email_signup=email)
         # Make an account
-        user = User()
-        user.user_email = email
-        user.user_password = generate_password_hash(password)
-        db.session.add(user)
+        if from_temp_account:
+            new_user = from_temp_account
+        else:
+            new_user = User()
+        new_user.user_email = email
+        new_user.user_password = generate_password_hash(password)
+        db.session.add(new_user)
         db.session.commit()
-        session["auth_user"] = user.user_id
+        session["auth_user"] = new_user.user_id
 
         return redirect("/#search")
 
@@ -819,7 +854,6 @@ def login_account():
     return redirect("/")
 
 
-
 @app.route("/logout")
 def logout():
     session.clear()
@@ -831,8 +865,27 @@ def login():
         next=request.args.get('next') or request.referrer or None,
         _external=True))
 
+@app.route("/temp_account")
+def create_temp_account():
+    user = User()
+    db.session.add(user)
+    db.session.commit()
+    session["auth_user"] = user.user_id
+    return redirect("/")
+
+
+def handle_fb_error(func):
+    @wraps(func)
+    def _fb_error_handler(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except oauth.OAuthException:
+            return "Sorry, Facebook sent us some invalid data. Please go back and attempt to log in again. Sorry!"
+
+    return _fb_error_handler
 
 @app.route('/login/authorized')
+@handle_fb_error
 @facebook.authorized_handler
 def facebook_authorized(resp):
     if resp is None:

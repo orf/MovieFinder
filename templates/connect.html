@@ -55,10 +55,41 @@
                 <p>
                     <h4>Alternative Methods</h4>
                 </p>
-                <a class="btn btn-primary" href="{{ url_for('login') }}">
-                    <i class="icon-user icon-white"></i>
-                    Login using Facebook</a>
+                <p>
+                    <a class="btn btn-primary" href="{{ url_for('login') }}">
+                        <i class="icon-user icon-white"></i>
+                        Login using Facebook</a>
+                </p>
+                <p>
+                    <a class="btn btn-info" data-toggle="modal" href="#tempAccountModal">
+                        <i class="icon-time icon-white"></i>
+                        Try it with a temporary account</a>
+                </p>
             </div>
+        </div>
+    </div>
+
+    <div class="modal hide fade in" id="tempAccountModal">
+        <div class="modal-header">
+            <button class="close" data-dismiss="modal">×</button>
+            <h3>Warning</h3>
+        </div>
+        <div class="modal-body">
+            <p>
+                Temporary accounts <strong>only last with your session</strong>, which will end if you clear your cookies.
+                When this happens you will <strong>loose your recommendations and all data associated with the account</strong>,
+                like your queue and your liked movies.
+            </p>
+            <p>
+                <strong>Creating a real account:</strong>
+            </p>
+            <p>
+                Click on the "Create Account" tab at the top of the page to enter an email address and password for your account.
+            </p>
+        </div>
+        <div class="modal-footer">
+            <a href="#" data-dismiss="modal" class="btn">Cancel</a>
+            <a class="btn btn-primary" href="{{ url_for('create_temp_account') }}">I understand, create a temporary account</a>
         </div>
     </div>
 

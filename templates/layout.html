@@ -76,12 +76,45 @@
                     <a class="brand" href="/">Movie Recommender</a>
                     {% if session.get('auth_user',None) %}
                         <ul class="nav pull-right">
+
+                            {% if user.is_temp_account() %}
+                                <li>
+                                    <a href="{{ url_for('account') }}">Create an account</a>
+                                </li>
+                            {% endif %}
+                            </li>
                             <li>
-                                <a href="{{ url_for('logout') }}" id="logout_button">Logout</a>
+                                {% if user.is_temp_account() %}
+                                    <a data-toggle="modal" href="#tempLogoutModal">Logout</a>
+                                {% else %}
+                                    <a href="{{ url_for('logout') }}" id="logout_button">Logout</a>
+                                {% endif %}
                             </li>
                         </ul>
                     {% endif %}
                 </div>
+            </div>
+        </div>
+
+        <div class="modal hide fade in" id="tempLogoutModal">
+            <div class="modal-header">
+                <button class="close" data-dismiss="modal">×</button>
+                <h3>Warning</h3>
+            </div>
+            <div class="modal-body">
+                <p><strong>You are signed into a temporary account.</strong></p>
+                <p>
+                    Logging out means you will not be able to log back in and will loose all of your data
+                </p>
+                <p>
+                    If you wish to continue using this service with a real account you can import your data into a
+                    new account by clicking on the "Account" tab and copying your "Import Access Code" and entering it
+                    on your new account.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <a href="#" data-dismiss="modal" class="btn btn-success">Cancel</a>
+                <a class="btn btn-danger" href="{{ url_for('logout') }}">I understand, log me out</a>
             </div>
         </div>
 

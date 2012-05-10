@@ -13,6 +13,12 @@ window.MovieRecomendation = Backbone.Model.extend({
     urlroot:"/api/recommendation"
 });
 
+window.MovieQueueItem = Backbone.Model.extend({
+    url:function(){
+        return "/api/queue/"+this.get("id");
+    }
+});
+
 window.MovieRecommendationCollection = Backbone.Collection.extend({
     model:MovieRecomendation,
     url:function(){
@@ -178,6 +184,17 @@ function handleSearchClick(id, title){
     $("#"+id+"_search").hide();
 }
 
+function handleSearchQueueClick(id, title){
+    var _id = id.replaceAll("tt","");
+    var movie = new MovieQueueItem({id:_id, title:title, from_search:true});
+    movie.save();
+    app.moviequeue.add(movie);
+}
+
+function handleSearchRemoveQueueClick(id){
+    console.log(id);
+}
+
 function HandleAddQueueClick(id){
     var movie = app.movieSuggestions.get(id);
     console.log("Movie:");
@@ -229,7 +246,12 @@ function handleRecommendedDislikeClick(id){
 var AppRouter  = Backbone.Router.extend({
     routes:{
         "search":"search",
-        "":"recommendations"
+        "":"recommendations",
+        "queue/:id":"view_queue_id"
+    },
+
+    view_queue_id:function(id){
+        console.log(id);
     },
 
     search:function(){
