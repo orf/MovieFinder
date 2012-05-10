@@ -167,7 +167,11 @@ window.MovieQueueView = Backbone.View.extend({
         $("#movieQueue").html( template );
 
         $(".view_queue_item").click(function(){
-            app.navigate("queue/"+$(this).attr("data-id"), true);
+            var movie = app.moviequeue.get($(this).attr("data-id"));
+            if (movie){
+                app.movieSuggestions.reset();
+                app.movieSuggestions.add(movie);
+            }
         })
 
     }
@@ -247,15 +251,7 @@ var AppRouter  = Backbone.Router.extend({
     },
 
     view_queue_id:function(id){
-        console.log("View queue ID: "+id);
-
-        var movie = app.moviequeue.get(id);
-        if (movie){
-            //app.movieSuggestions.reset();
-            //app.movieSuggestions.add(movie);
-        }
-
-        this.renderSideBar();
+        console.log(id);
     },
 
     search:function(){
