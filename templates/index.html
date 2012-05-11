@@ -308,10 +308,18 @@
                                         <%= gen.capitalize()%><% if (rec.get("genres").length != 1) { %>, <% } %>
                                     <% }); %>
                                 </p>
+
+                                <% if (rec.get("rating_uk") != "unknown" & rec.get("rating_usa") != "unknown") { %>
                                 <p>
                                     <strong>Ratings:</strong>
-                                    <%= rec.get("rating_uk") %> (UK) <%= rec.get("rating_usa") %> (USA)
+                                    <% if (rec.get("rating_uk") != "unknown") { %>
+                                        <%= rec.get("rating_uk") %> (UK)
+                                    <% } else if(rec.get("rating_usa") != "unknown") { %>
+                                        <%= rec.get("rating_usa") %> (USA)
+                                    <% } %>
                                 </p>
+                                <% } %>
+
                                 <p>
                                     <strong>Languages:</strong>
                                     <% _.each(rec.get("languages"), function(lang) { %>
@@ -319,7 +327,15 @@
                                     <% }); %>
                                 </p>
 
-                                <p><strong>Stars:</strong>
+                                <% if (rec.get("director")) { %>
+                                    <p>
+                                        <strong>Director:</strong>
+                                        <%= rec.get("director") %>
+                                    </p>
+                                <% } %>
+
+                                <p>
+                                    <strong>Stars:</strong>
                                     <%= rec.get("stars") %>
                                 </p>
 
@@ -389,16 +405,16 @@
                 <div id="moreOptions">
                     <div class="control-group controls">
                         Available in
-                        <div class="input-append">
                             <input type="text" id="language_input" class="input-small" placeholder="Language">
-                        </div>
                         with the genres
-                        <div class="input-append">
                             <input type="text" id="genre_input" class="input-medium" placeholder="Genre, Genre, Genre">
-                            <button class="btn" id="language_refresh" type="button">
-                                <i class="icon-refresh"></i>
-                            </button>
-                        </div>
+                    </div>
+                    <div class="control-group controls">
+                        directed by
+                        <input type="text" id="director_input" class="input-medium" placeholder="start of name">
+                        <button class="btn" id="language_refresh" type="button">
+                            <i class="icon-refresh"></i>
+                        </button>
                     </div>
                 </div>
                 </form>

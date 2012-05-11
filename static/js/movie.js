@@ -25,14 +25,14 @@ window.MovieRecommendationCollection = Backbone.Collection.extend({
         var filter_type = $("#filter_type").val();
         var filter_score = $("#filter_imdb_score").val();
         var url = "/api/getrecommendations?type=" + filter_type + "&imdb_score=" + filter_score;
-
-        if (!$("#moreOptions").is(":hidden")){
-            if ($("#language_input").val() != ""){
-                url = url + "&language="+$("#language_input").val();
-            }
-            if ($("#genre_input").val() != ""){
-                url = url + "&genre="+$("#genre_input").val();
-            }
+        if ($("#language_input").val() != ""){
+            url = url + "&language="+$("#language_input").val();
+        }
+        if ($("#genre_input").val() != ""){
+            url = url + "&genre="+$("#genre_input").val();
+        }
+        if ($("#director_input").val() != ""){
+            url = url + "&director="+$("#director_input").val();
         }
 
         return url

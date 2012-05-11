@@ -138,6 +138,7 @@ INDEXES = (Index('imdb_string_id_hash_index', Movie.imdb_string_id, postgresql_u
                                                                 postgresql_ops={"recomendations": 'gin__int_ops'}),
            Index('languages_index', Movie.languages, postgresql_using='gin'),
            Index('title_index', Movie.title, postgresql_using='hash'),
+           Index('director_index', Movie.director)
     )
 
 for ix in INDEXES:
@@ -570,6 +571,7 @@ def recommendations():
     filter_imdb_score = request.args.get("imdb_score",0,type=int)
     filter_language = request.args.get("language","").lower()
     filter_genre   = request.args.get("genre", "").lower()
+    filter_director = request.args.get("director","")#.lower()
 
 
     if not user_likes:
@@ -595,7 +597,7 @@ def recommendations():
 
     time_filter = None
 
-    if filter_imdb_score != 0 or filter_type != "all" or filter_language or filter_genre:
+    if any([filter_imdb_score != 0,filter_type != "all",filter_language, filter_genre, filter_director]):
         time_filter = time.time()
         rec_query = db.session.query(Movie.imdb_id).filter(Movie.imdb_id.in_(id_counters.keys()))
         if filter_imdb_score > 0:
@@ -604,6 +606,8 @@ def recommendations():
             rec_query = rec_query.filter(Movie.languages.op("@>")("{%s}"%filter_language))
         if filter_genre:
             rec_query = rec_query.filter(Movie.genres.op("@>")("{%s}"%filter_genre))
+        if filter_director:
+            rec_query = rec_query.filter(Movie.director.ilike(filter_director+"%"))
         if filter_type in ("movie","tv"):
             if filter_type == "tv":
                 rec_query = rec_query.filter(Movie.type == "tv series")
@@ -706,7 +710,6 @@ def getMovies():
     user = get_user()
     if not user:
         return abort(400)
-    return json.dumps([{"id":x.imdb_id, "title":x.title} for x in user.get_movies_liked()])
     return json.dumps([{"id":x.imdb_id, "title":x.title} for x in user.get_movies_liked()])
 
 @app.route("/api/movies/<id>", methods=["PUT","DELETE"])
