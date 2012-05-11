@@ -531,8 +531,6 @@ def addtoqueue(id):
                 else:
                     AddMovie.apply_async((movie.imdb_string_id,True))
         if not id in user.movies_queued:
-            print id
-            print user.movies_queued
             db.session.query(User).filter(User.user_id == user.user_id).update(
                     {User.movies_queued:User.movies_queued.op("+")([int(data["id"])])}, synchronize_session=False
             )
