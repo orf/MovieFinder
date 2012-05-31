@@ -138,16 +138,17 @@ INDEXES = (Index('imdb_string_id_hash_index', Movie.imdb_string_id, postgresql_u
                                                                 postgresql_ops={"recomendations": 'gin__int_ops'}),
            Index('languages_index', Movie.languages, postgresql_using='gin'),
            Index('title_index', Movie.title, postgresql_using='hash'),
-           Index('director_index', Movie.director)
+           #Index('director_index', func.lower(Movie.director))
     )
 
 for ix in INDEXES:
     try:
+        #print ix
         ix.create(db.engine)
     except Exception, e:
         #print e
         pass
-
+#Index('director_index', func.lower(Movie.director)).create(db.engine)
 
 oauth = OAuth()
 
@@ -611,7 +612,7 @@ def recommendations():
                 rec_query = rec_query.filter(Movie.type == "tv series")
             elif filter_type == "movie":
                 rec_query = rec_query.filter(Movie.type == "movie")
-
+        print rec_query.as_scalar()
         liked_ids = [i[0] for i in rec_query.all()]
         for id in id_counters.keys():
             if id not in liked_ids:
